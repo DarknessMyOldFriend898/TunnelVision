@@ -93,6 +93,7 @@ export function bindUIEvents() {
     // Auto-summary settings
     $('#tv_auto_summary_enabled').on('change', onAutoSummaryToggle);
     $('#tv_auto_summary_interval').on('change', onAutoSummaryIntervalChange);
+    $('#tv_auto_hide_summarized').on('change', onAutoHideSummarizedToggle);
 
     // Multi-book mode
     $('input[name="tv_multi_book_mode"]').on('change', onMultiBookModeChange);
@@ -160,6 +161,7 @@ export function refreshUI() {
     $('#tv_auto_summary_options').toggle(autoEnabled);
     $('#tv_auto_summary_interval').val(settings.autoSummaryInterval ?? 20);
     $('#tv_auto_summary_count').text(getAutoSummaryCount());
+    $('#tv_auto_hide_summarized').prop('checked', settings.autoHideSummarized !== false);
 
     // Sync multi-book mode
     $(`input[name="tv_multi_book_mode"][value="${settings.multiBookMode || 'unified'}"]`).prop('checked', true);
@@ -569,6 +571,13 @@ function onAutoSummaryIntervalChange() {
     $('#tv_auto_summary_interval').val(clamped);
     const settings = getSettings();
     settings.autoSummaryInterval = clamped;
+    saveSettingsDebounced();
+}
+
+function onAutoHideSummarizedToggle() {
+    const enabled = $(this).prop('checked');
+    const settings = getSettings();
+    settings.autoHideSummarized = enabled;
     saveSettingsDebounced();
 }
 

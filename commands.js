@@ -169,7 +169,7 @@ function buildCommandPrompt({ command, arg }, contextMessages) {
             return (
                 `[INSTRUCTION: You MUST call TunnelVision_Summarize this turn. ` +
                 `Title: "${title}". ` +
-                `Review the last ${contextMessages} messages and create a thorough summary.]`
+                `Review the last ${contextMessages} messages and create a thorough summary. Set messages_back to the number of messages this summary covers.]`
             );
         }
         case 'remember': {

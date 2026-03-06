@@ -70,6 +70,7 @@ export async function runDiagnostics() {
     results.push(...checkArcNodes());
     results.push(checkNotebookConfig());
     results.push(checkStealthMode());
+    results.push(checkAutoHideSummarized());
     results.push(checkTurnSummaryEvent());
 
     return results;
@@ -799,6 +800,15 @@ function checkStealthMode() {
         return warn('Stealth mode: ON. All TunnelVision tool calls are hidden from chat output. Disable if you need to debug tool call behavior.');
     }
     return pass('Stealth mode: off (tool calls visible in chat)');
+}
+
+/** Check auto-hide summarized messages config. */
+function checkAutoHideSummarized() {
+    const settings = getSettings();
+    if (settings.autoHideSummarized === true) {
+        return pass('Auto-hide summarized: ON. Messages covered by summaries will be hidden from chat to save tokens.');
+    }
+    return pass('Auto-hide summarized: off. Summarized messages remain visible in chat.');
 }
 
 /** Check that MESSAGE_RECEIVED event exists for turn-level console summary. */

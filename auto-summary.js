@@ -77,7 +77,7 @@ function onGenerationForAutoSummary() {
         const activeBooks = getActiveTunnelVisionBooks();
         if (activeBooks.length === 0) return;
 
-        const prompt = `[AUTO-SUMMARY INSTRUCTION: ${count} messages have passed since the last summary. You MUST call TunnelVision_Summarize this turn to create a summary of recent events. Write a descriptive title and thorough summary of what has happened in the last ~${count} messages. After summarizing, continue responding to the user normally.]`;
+        const prompt = `[AUTO-SUMMARY INSTRUCTION: ${count} messages have passed since the last summary. You MUST call TunnelVision_Summarize this turn to create a summary of recent events. Write a descriptive title and thorough summary of what has happened in the last ~${count} messages. Set messages_back to ${count}. After summarizing, continue responding to the user normally.]`;
 
         setExtensionPrompt(TV_AUTOSUMMARY_KEY, prompt, extension_prompt_types.IN_PROMPT, 0);
         counters.set(chatId, 0);

@@ -265,6 +265,7 @@ const SETTING_DEFAULTS = {
     mandatoryTools: false,
     notebookEnabled: true,
     stealthMode: false,
+    autoHideSummarized: true,
 };
 
 function ensureSettings() {
