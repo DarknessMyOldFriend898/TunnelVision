@@ -428,6 +428,8 @@ HOW TO USE (Collapsed-Tree Mode):
 
 TIP: Pick the most specific (deepest) node that matches your need. Retrieving a branch returns ALL descendant entries, which may include irrelevant content.
 
+CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword across ALL active lorebooks. Useful when you're not sure which category something is in, or need to find a specific character/place/item by name.
+
 Full tree index:
 ${treeOverview}`
         : `Search lorebook knowledge by navigating a hierarchical tree. Use this to find relevant world info, character details, lore, or rules for the current scene.
@@ -436,6 +438,8 @@ HOW TO USE (Traversal Mode):
 1. First call: Review the top-level categories below and pick the most relevant
 2. If the selected node has sub-categories, call again with that node_id to go deeper
 3. When you find the right category, use action "retrieve" to get the actual content
+
+CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword across ALL active lorebooks. Useful when you're not sure which category something is in, or need to find a specific character/place/item by name.
 
 Top-level tree:
 ${treeOverview}`;
@@ -457,8 +461,12 @@ ${treeOverview}`;
                 },
                 action: {
                     type: 'string',
-                    enum: ['retrieve', 'navigate'],
-                    description: '"retrieve" to get entry content (default). "navigate" to see a node\'s children.',
+                    enum: ['retrieve', 'navigate', 'search'],
+                    description: '"retrieve" to get entry content (default). "navigate" to see a node\'s children. "search" to find entries by keyword across all lorebooks.',
+                },
+                query: {
+                    type: 'string',
+                    description: 'For action "search": keyword or phrase to find across all lorebooks. Matches entry titles, keywords, and content.',
                 },
                 reasoning: {
                     type: 'string',
@@ -476,15 +484,18 @@ ${treeOverview}`;
                 },
                 action: {
                     type: 'string',
-                    enum: ['navigate', 'retrieve'],
-                    description: '"navigate" to see children, "retrieve" to get entry content. Auto-detects: navigate if node has children, retrieve if leaf.',
+                    enum: ['navigate', 'retrieve', 'search'],
+                    description: '"navigate" to see children, "retrieve" to get entry content. "search" to find entries by keyword across all lorebooks. Auto-detects: navigate if node has children, retrieve if leaf.',
+                },
+                query: {
+                    type: 'string',
+                    description: 'For action "search": keyword or phrase to find across all lorebooks. Matches entry titles, keywords, and content.',
                 },
                 reasoning: {
                     type: 'string',
                     description: 'Brief explanation of why this branch is relevant to the current scene.',
                 },
             },
-            required: ['node_id'],
         };
 
     return {
@@ -497,6 +508,11 @@ ${treeOverview}`;
                 console.log(`[TunnelVision] Search | ${args.reasoning}`);
             }
 
+            // Cross-book keyword search
+            if (args.action === 'search') {
+                return handleCrossBookSearch(args);
+            }
+
             // Collapsed mode: support node_ids (array) or node_id (string)
             if (isCollapsed) {
                 return handleCollapsedSearch(args);
@@ -504,6 +520,7 @@ ${treeOverview}`;
             return handleTraversalSearch(args);
         },
         formatMessage: async (args) => {
+            if (args?.action === 'search') return 'Searching across all lorebooks...';
             const action = args?.action || (isCollapsed ? 'retrieve' : 'navigate');
             return action === 'retrieve'
                 ? 'Retrieving lorebook entries...'
@@ -634,4 +651,101 @@ async function handleTraversalSearch(args) {
     const entryCount = getAllEntryUids(node).length;
     console.log(`[TunnelVision] Retrieved ${entryCount} entries from "${node.label}"`);
     return content;
+}
+
+// ─── Cross-Book Search ───────────────────────────────────────────
+
+/** Maximum results returned from cross-book search. */
+const SEARCH_MAX_RESULTS = 10;
+/** Maximum content preview length per result. */
+const SEARCH_PREVIEW_LEN = 200;
+
+/**
+ * Search across all active lorebooks by keyword.
+ * Matches against entry title (comment), keywords, and content.
+ * Returns matching entries with source book, UID, tree location, and content preview.
+ */
+async function handleCrossBookSearch(args) {
+    const query = (args.query || '').trim();
+    if (!query) {
+        return 'Search requires a "query" — a keyword or phrase to find across lorebooks.';
+    }
+
+    const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const activeBooks = getActiveTunnelVisionBooks();
+    const results = [];
+
+    for (const bookName of activeBooks) {
+        const bookData = await loadWorldInfo(bookName);
+        if (!bookData?.entries) continue;
+
+        const tree = getTree(bookName);
+
+        for (const key of Object.keys(bookData.entries)) {
+            const entry = bookData.entries[key];
+            if (entry.disable) continue;
+
+            // Build searchable text from title, keys, and content
+            const title = (entry.comment || '').toLowerCase();
+            const keys = (entry.key || []).join(' ').toLowerCase();
+            const content = (entry.content || '').toLowerCase();
+            const searchable = `${title} ${keys} ${content}`;
+
+            // All terms must match somewhere in the entry
+            const matches = terms.every(t => searchable.includes(t));
+            if (!matches) continue;
+
+            // Find which tree node this entry belongs to
+            let nodeLabel = '(unassigned)';
+            if (tree?.root) {
+                const nodeName = findEntryNode(tree.root, entry.uid);
+                if (nodeName) nodeLabel = nodeName;
+            }
+
+            results.push({
+                uid: entry.uid,
+                title: entry.comment || entry.key?.[0] || `#${entry.uid}`,
+                book: bookName,
+                node: nodeLabel,
+                keys: (entry.key || []).slice(0, 5).join(', '),
+                preview: (entry.content || '').substring(0, SEARCH_PREVIEW_LEN),
+            });
+
+            if (results.length >= SEARCH_MAX_RESULTS) break;
+        }
+        if (results.length >= SEARCH_MAX_RESULTS) break;
+    }
+
+    if (results.length === 0) {
+        return `No entries found matching "${query}" across ${activeBooks.length} lorebook(s). Try different keywords, or use tree navigation to browse by category.`;
+    }
+
+    console.log(`[TunnelVision] Cross-book search "${query}": ${results.length} result(s)`);
+
+    let response = `Found ${results.length} entry/entries matching "${query}":\n\n`;
+    for (const r of results) {
+        response += `— "${r.title}" (UID ${r.uid}, ${r.book} → ${r.node})\n`;
+        if (r.keys) response += `  Keys: ${r.keys}\n`;
+        response += `  ${r.preview}${r.preview.length >= SEARCH_PREVIEW_LEN ? '...' : ''}\n\n`;
+    }
+    response += `Use action "retrieve" with node_id to get full content, or Update/Forget with the UID.`;
+    return response;
+}
+
+/**
+ * Find which tree node contains a given entry UID.
+ * Returns the node label or null if not found.
+ * @param {Object} node
+ * @param {number} uid
+ * @returns {string|null}
+ */
+function findEntryNode(node, uid) {
+    if ((node.entryUids || []).includes(uid)) {
+        return node.label || 'root';
+    }
+    for (const child of (node.children || [])) {
+        const found = findEntryNode(child, uid);
+        if (found) return found;
+    }
+    return null;
 }

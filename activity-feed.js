@@ -533,6 +533,7 @@ function buildToolSummary(toolName, params, result) {
         case 'TunnelVision_Search': {
             const action = params.action || 'navigate';
             const reasoning = params.reasoning || '';
+            const query = params.query || '';
             const nodeIds = params.node_ids || (params.node_id ? [params.node_id] : []);
             let count = '';
             try {
@@ -540,6 +541,7 @@ function buildToolSummary(toolName, params, result) {
                 if (Array.isArray(parsed)) count = ` → ${parsed.length} entries`;
                 else if (parsed.entries) count = ` → ${parsed.entries.length} entries`;
             } catch { /* noop */ }
+            if (action === 'search' && query) return `"${truncate(query, 40)}"${count}`;
             if (reasoning) return `${truncate(reasoning, 50)}${count}`;
             if (nodeIds.length > 0) return `${action} [${nodeIds.slice(0, 3).join(', ')}${nodeIds.length > 3 ? '...' : ''}]${count}`;
             return `${action}${count}`;
