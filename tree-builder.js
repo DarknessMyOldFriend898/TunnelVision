@@ -9,7 +9,7 @@
  *   3. Recursively subdivide large nodes (PageIndex: process_large_node_recursively)
  */
 
-import { generateRaw } from '../../../../script.js';
+import { generateRaw as _generateRaw } from '../../../../script.js';
 import { getContext } from '../../../st-context.js';
 import { loadWorldInfo } from '../../../world-info.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
@@ -25,6 +25,15 @@ import {
 
 const MAX_ENTRIES_PER_NODE = 10;
 
+/** Strip thinking/reasoning blocks from LLM responses. */
+const THINK_BLOCK_RE = /<think[\s\S]*?<\/think>/gi;
+
+/** Wrapper around generateRaw that strips thinking blocks from responses. */
+async function generateRaw(opts) {
+    const result = await _generateRaw(opts);
+    return typeof result === 'string' ? result.replace(THINK_BLOCK_RE, '').trim() : result;
+}
+
 /**
  * Switch to the configured TV connection profile (if any), run the callback,
  * then restore the original profile. Falls back gracefully if Connection Manager
@@ -36,7 +45,10 @@ const MAX_ENTRIES_PER_NODE = 10;
 async function withConnectionProfile(fn) {
     const settings = getSettings();
     const targetProfile = settings.connectionProfile;
-    if (!targetProfile) return fn();
+    if (!targetProfile) {
+        console.log('[TunnelVision] No connection profile configured, using current API.');
+        return fn();
+    }
 
     const profileCmd = SlashCommandParser?.commands?.['profile'];
     if (!profileCmd) {
@@ -48,15 +60,16 @@ async function withConnectionProfile(fn) {
     const originalProfile = await profileCmd.callback({}, '');
 
     // Skip switching if already on the target profile
-    if (originalProfile === targetProfile) return fn();
+    if (originalProfile === targetProfile) {
+        return fn();
+    }
 
     try {
         console.log(`[TunnelVision] Switching to connection profile: "${targetProfile}"`);
-        await profileCmd.callback({ await: 'true', timeout: '3000' }, targetProfile);
+        await profileCmd.callback({ await: 'true', timeout: '5000' }, targetProfile);
         return await fn();
     } finally {
-        console.log(`[TunnelVision] Restoring connection profile: "${originalProfile}"`);
-        await profileCmd.callback({ await: 'true', timeout: '3000' }, originalProfile || '<None>');
+        await profileCmd.callback({ await: 'true', timeout: '5000' }, originalProfile || '<None>');
     }
 }
 
