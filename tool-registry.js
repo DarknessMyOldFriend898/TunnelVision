@@ -6,7 +6,9 @@
  */
 
 import { ToolManager } from '../../../tool-calling.js';
-import { selected_world_info, loadWorldInfo } from '../../../world-info.js';
+import { selected_world_info, world_info, loadWorldInfo, METADATA_KEY } from '../../../world-info.js';
+import { characters, this_chid, chat_metadata } from '../../../../script.js';
+import { getCharaFilename } from '../../../utils.js';
 import { isLorebookEnabled, getSettings } from './tree-store.js';
 
 import { getDefinition as getSearchDef, TOOL_NAME as SEARCH_NAME } from './tools/search.js';
@@ -66,13 +68,42 @@ async function getTrackerList() {
 
 /**
  * Get all active lorebooks that have TunnelVision enabled.
+ * Checks global, character-attached (primary + extraBooks), and chat-attached lorebooks.
  * Shared by all tools via import from this module.
  * @returns {string[]}
  */
 export function getActiveTunnelVisionBooks() {
+    const candidates = new Set();
+
+    // 1. Global lorebooks (selected in World Info dropdown)
+    if (Array.isArray(selected_world_info)) {
+        for (const name of selected_world_info) candidates.add(name);
+    }
+
+    // 2. Character-attached lorebooks (primary + extraBooks via charLore)
+    if (this_chid !== undefined && this_chid !== null) {
+        const character = characters[this_chid];
+        const primaryBook = character?.data?.extensions?.world;
+        if (primaryBook) candidates.add(primaryBook);
+
+        const charFilename = getCharaFilename(this_chid);
+        const charLore = world_info?.charLore || [];
+        const charEntry = charLore.find(e => e.name === charFilename);
+        if (charEntry?.extraBooks) {
+            for (const name of charEntry.extraBooks) candidates.add(name);
+        }
+    }
+
+    // 3. Chat-attached lorebook (native ST + CarrotKernel multi-book)
+    const chatWorld = chat_metadata?.[METADATA_KEY];
+    if (chatWorld) candidates.add(chatWorld);
+    if (Array.isArray(chat_metadata?.carrot_chat_books)) {
+        for (const name of chat_metadata.carrot_chat_books) candidates.add(name);
+    }
+
+    // Filter to only TV-enabled books
     const active = [];
-    if (!selected_world_info || !Array.isArray(selected_world_info)) return active;
-    for (const bookName of selected_world_info) {
+    for (const bookName of candidates) {
         if (isLorebookEnabled(bookName)) active.push(bookName);
     }
     return active;

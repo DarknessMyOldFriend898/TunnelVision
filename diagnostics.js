@@ -112,10 +112,11 @@ function checkToolCallingSupport() {
     }
 }
 
-/** Check that enabled lorebooks actually exist in selected_world_info. */
+/** Check that enabled lorebooks actually exist and are active (global, character, or chat). */
 function checkActiveLorebooksExist() {
     const results = [];
     const settings = getSettings();
+    const activeBooks = getActiveTunnelVisionBooks();
 
     for (const bookName of Object.keys(settings.enabledLorebooks)) {
         if (!settings.enabledLorebooks[bookName]) continue;
@@ -123,8 +124,8 @@ function checkActiveLorebooksExist() {
         if (!world_names?.includes(bookName)) {
             results.push(fail(`Enabled lorebook "${bookName}" does not exist. Disabling.`));
             settings.enabledLorebooks[bookName] = false;
-        } else if (!selected_world_info?.includes(bookName)) {
-            results.push(warn(`Lorebook "${bookName}" has TunnelVision enabled but is not active in current chat.`));
+        } else if (!activeBooks.includes(bookName)) {
+            results.push(warn(`Lorebook "${bookName}" has TunnelVision enabled but is not active in current chat (not found in global, character, or chat lorebooks).`));
         } else {
             results.push(pass(`Lorebook "${bookName}" exists and is active`));
         }
