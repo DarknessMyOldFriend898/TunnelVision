@@ -24,13 +24,15 @@ import {
     setBookDescription,
     getSelectedLorebook,
     setSelectedLorebook,
-    getConnectionProfileId,
-    setConnectionProfileId,
-    listConnectionProfiles,
     isTrackerUid,
     isTrackerTitle,
     setTrackerUid,
     syncTrackerUidsForLorebook,
+    getConnectionProfileId,
+    setConnectionProfileId,
+    listConnectionProfiles,
+    getBookPermission,
+    setBookPermission,
     SETTING_DEFAULTS,
 } from './tree-store.js';
 import { buildTreeFromMetadata, buildTreeWithLLM, generateSummariesForTree, ingestChatMessages } from './tree-builder.js';
@@ -157,8 +159,26 @@ export function bindUIEvents() {
     // Multi-book mode
     $('input[name="tv_multi_book_mode"]').on('change', onMultiBookModeChange);
 
-    // Connection profile
+    // Sidecar LLM (connection profile + sampler overrides)
     $('#tv_connection_profile').on('change', onConnectionProfileChange);
+    $('#tv_sidecar_temperature').on('input', onSidecarTemperatureChange);
+    $('#tv_sidecar_max_tokens').on('input', onSidecarMaxTokensChange);
+
+    // Sidecar auto-retrieval
+    $('#tv_sidecar_auto_retrieval').on('change', onSidecarAutoRetrievalToggle);
+    $('#tv_sidecar_context_messages').on('input', onSidecarContextMessagesChange);
+    $('#tv_sidecar_max_injection').on('input', onSidecarMaxInjectionChange);
+
+    // Sidecar post-gen writer
+    $('#tv_sidecar_post_gen_writer').on('change', onSidecarPostGenWriterToggle);
+    $('#tv_sidecar_writer_context').on('input', onSidecarWriterContextChange);
+    $('#tv_sidecar_writer_max_ops').on('input', onSidecarWriterMaxOpsChange);
+
+    // Compact tool prompts
+    $('#tv_compact_tool_prompts').on('change', onCompactToolPromptsToggle);
+
+    // Per-lorebook permissions
+    $('#tv_book_permission').on('change', onBookPermissionChange);
 
     // Diagnostics collapsible header
     $('#tv_diagnostics_header').on('click', function () {
@@ -266,7 +286,7 @@ export function refreshUI() {
     // Sync multi-book mode
     $(`input[name="tv_multi_book_mode"][value="${settings.multiBookMode || 'unified'}"]`).prop('checked', true);
 
-    // Sync connection profile
+    // Sync connection profile + sidecar sampler controls
     populateConnectionProfiles();
 
     populateLorebookDropdown();
@@ -380,6 +400,7 @@ async function loadLorebookUI(bookName) {
     }
     $('#tv_lorebook_enabled').prop('checked', isLorebookEnabled(bookName));
     $('#tv_book_description').val(getBookDescription(bookName) || '');
+    $('#tv_book_permission').val(getBookPermission(bookName));
     const tree = getTree(bookName);
     updateTreeStatus(bookName, tree);
     await renderTreeEditor(bookName, tree);
@@ -871,10 +892,79 @@ function onMultiBookModeChange() {
     registerTools();
 }
 
-// ─── Connection Profile ──────────────────────────────────────────
+// ─── Sidecar LLM (Connection Profile + Sampler Overrides) ───────
 
 function onConnectionProfileChange() {
     setConnectionProfileId($(this).val() || null);
+    // Show/hide sampler controls when a profile is selected
+    $('#tv_sidecar_sampler_fields').toggle(!!$(this).val());
+}
+
+function onSidecarTemperatureChange() {
+    const val = parseFloat($(this).val());
+    const settings = getSettings();
+    settings.sidecarTemperature = val;
+    $('#tv_sidecar_temp_val').text(val.toFixed(2));
+    saveSettingsDebounced();
+}
+
+function onSidecarMaxTokensChange() {
+    const settings = getSettings();
+    settings.sidecarMaxTokens = Number($(this).val()) || 2048;
+    saveSettingsDebounced();
+}
+
+function onSidecarAutoRetrievalToggle() {
+    const settings = getSettings();
+    settings.sidecarAutoRetrieval = $(this).prop('checked');
+    $('#tv_sidecar_retrieval_fields').toggle(settings.sidecarAutoRetrieval);
+    saveSettingsDebounced();
+}
+
+function onSidecarContextMessagesChange() {
+    const settings = getSettings();
+    settings.sidecarContextMessages = Number($(this).val()) || 10;
+    saveSettingsDebounced();
+}
+
+function onSidecarMaxInjectionChange() {
+    const settings = getSettings();
+    settings.sidecarMaxInjectionTokens = Number($(this).val()) || 4000;
+    saveSettingsDebounced();
+}
+
+function onSidecarPostGenWriterToggle() {
+    const settings = getSettings();
+    settings.sidecarPostGenWriter = $(this).prop('checked');
+    $('#tv_sidecar_writer_fields').toggle(settings.sidecarPostGenWriter);
+    saveSettingsDebounced();
+}
+
+function onCompactToolPromptsToggle() {
+    const settings = getSettings();
+    settings.compactToolPrompts = $(this).prop('checked');
+    saveSettingsDebounced();
+    registerTools();
+}
+
+function onSidecarWriterContextChange() {
+    const settings = getSettings();
+    settings.sidecarWriterContextMessages = Number($(this).val()) || 15;
+    saveSettingsDebounced();
+}
+
+function onSidecarWriterMaxOpsChange() {
+    const settings = getSettings();
+    settings.sidecarWriterMaxOps = Number($(this).val()) || 5;
+    saveSettingsDebounced();
+}
+
+// ─── Per-Lorebook Permissions ────────────────────────────────────
+
+function onBookPermissionChange() {
+    if (!currentLorebook) return;
+    setBookPermission(currentLorebook, $(this).val() || 'read_write');
+    registerTools();
 }
 
 function populateConnectionProfiles() {
@@ -890,6 +980,30 @@ function populateConnectionProfiles() {
     }
 
     $select.val(currentVal);
+
+    // Sync sampler controls
+    const settings = getSettings();
+    $('#tv_sidecar_temperature').val(settings.sidecarTemperature ?? 0.2);
+    $('#tv_sidecar_temp_val').text((settings.sidecarTemperature ?? 0.2).toFixed(2));
+    $('#tv_sidecar_max_tokens').val(settings.sidecarMaxTokens || 2048);
+    $('#tv_sidecar_sampler_fields').toggle(!!currentVal);
+
+    // Sync auto-retrieval controls
+    const autoRetrieval = settings.sidecarAutoRetrieval === true;
+    $('#tv_sidecar_auto_retrieval').prop('checked', autoRetrieval);
+    $('#tv_sidecar_retrieval_fields').toggle(autoRetrieval);
+    $('#tv_sidecar_context_messages').val(settings.sidecarContextMessages ?? 10);
+    $('#tv_sidecar_max_injection').val(settings.sidecarMaxInjectionTokens ?? 4000);
+
+    // Sync compact tool prompts
+    $('#tv_compact_tool_prompts').prop('checked', settings.compactToolPrompts === true);
+
+    // Sync post-gen writer controls
+    const postGenWriter = settings.sidecarPostGenWriter === true;
+    $('#tv_sidecar_post_gen_writer').prop('checked', postGenWriter);
+    $('#tv_sidecar_writer_fields').toggle(postGenWriter);
+    $('#tv_sidecar_writer_context').val(settings.sidecarWriterContextMessages ?? 15);
+    $('#tv_sidecar_writer_max_ops').val(settings.sidecarWriterMaxOps ?? 5);
 }
 
 // ─── Tree Management ─────────────────────────────────────────────
@@ -1128,6 +1242,27 @@ async function onOpenTreeEditor() {
                 selectNode(node);
                 registerTools();
             });
+            const $regenSummary = $('<button class="tv-popup-btn" title="Regenerate summary for this node"><i class="fa-solid fa-arrows-rotate"></i></button>');
+            $regenSummary.on('click', async (e) => {
+                e.stopPropagation();
+                const $icon = $regenSummary.find('i');
+                try {
+                    $regenSummary.prop('disabled', true);
+                    $icon.addClass('fa-spin');
+                    // Wrap in temp parent so the target node gets summarized (not skipped as root)
+                    const tempWrapper = { children: [node], entryUids: [] };
+                    await generateSummariesForTree(tempWrapper, bookName, true);
+                    saveTree(bookName, tree);
+                    renderTreeNodes();
+                    renderMainPanel();
+                    toastr.success(`Summary regenerated for "${node.label}".`, 'TunnelVision');
+                } catch (err) {
+                    toastr.error(err.message, 'TunnelVision');
+                } finally {
+                    $regenSummary.prop('disabled', false);
+                    $icon.removeClass('fa-spin');
+                }
+            });
             const $delNode = $('<button class="tv-popup-btn tv-popup-btn-danger" title="Delete this node"><i class="fa-solid fa-trash-can"></i></button>');
             $delNode.on('click', () => {
                 if (!confirm(`Delete "${node.label}" and unassign its entries?`)) return;
@@ -1139,7 +1274,7 @@ async function onOpenTreeEditor() {
                 renderUnassignedEntries(bookName, tree, bookData);
                 registerTools();
             });
-            $actions.append($addSub, $delNode);
+            $actions.append($addSub, $regenSummary, $delNode);
             $titleRow.append($actions);
         } else {
             $titleRow.append($('<div class="tv-main-title-static"></div>').text(isUnassigned ? 'Unassigned Entries' : 'Root'));
@@ -1329,6 +1464,36 @@ async function onOpenTreeEditor() {
                     $expand.append($('<div class="tv-expand-label">Content</div>'));
                     $expand.append($('<div class="tv-expand-content"></div>').text(entry.content));
                 }
+
+                // Edit button row
+                const $editRow = $('<div class="tv-expand-edit-row"></div>');
+                const $editBtn = $('<button class="tv-popup-btn tv-popup-btn-sm" title="Edit entry content"><i class="fa-solid fa-pen-to-square"></i> Edit</button>');
+                $editBtn.on('click', (e) => {
+                    e.stopPropagation();
+                    // Toggle edit mode
+                    const $contentEl = $expand.find('.tv-expand-content');
+                    if ($contentEl.is('textarea')) {
+                        // Save mode
+                        entry.content = $contentEl.val();
+                        saveWorldInfo(bookName, bookData, true);
+                        const $newContent = $('<div class="tv-expand-content"></div>').text(entry.content);
+                        $contentEl.replaceWith($newContent);
+                        $editBtn.html('<i class="fa-solid fa-pen-to-square"></i> Edit');
+                        toastr.success('Entry updated.', 'TunnelVision');
+                    } else {
+                        // Edit mode
+                        const $textarea = $('<textarea class="tv-expand-content tv-expand-content-edit"></textarea>').val(entry.content || '');
+                        if ($contentEl.length) {
+                            $contentEl.replaceWith($textarea);
+                        } else {
+                            $expand.find('.tv-expand-label').last().after($textarea);
+                        }
+                        $textarea.focus();
+                        $editBtn.html('<i class="fa-solid fa-floppy-disk"></i> Save');
+                    }
+                });
+                $editRow.append($editBtn);
+                $expand.append($editRow);
 
                 $row.after($expand);
                 $expand.slideDown(150);

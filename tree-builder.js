@@ -13,6 +13,7 @@ import { generateRaw as _generateRaw } from '../../../../script.js';
 import { getContext } from '../../../st-context.js';
 import { loadWorldInfo } from '../../../world-info.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
+import { isSidecarConfigured, sidecarGenerate } from './llm-sidecar.js';
 import { createEntry, findEntryByUid } from './entry-manager.js';
 import {
     createEmptyTree,
@@ -60,8 +61,14 @@ function getEffectiveGranularity(entryCount = 0) {
 /** Strip thinking/reasoning blocks from LLM responses. */
 const THINK_BLOCK_RE = /<think[\s\S]*?<\/think>/gi;
 
-/** Wrapper around generateRaw that strips thinking blocks from responses. */
+/**
+ * Wrapper around LLM generation. Uses the sidecar (direct API) when configured,
+ * falls back to ST's generateRaw when not. Strips thinking blocks from responses.
+ */
 async function generateRaw(opts) {
+    if (isSidecarConfigured()) {
+        return sidecarGenerate(opts);
+    }
     const result = await _generateRaw(opts);
     return typeof result === 'string' ? result.replace(THINK_BLOCK_RE, '').trim() : result;
 }
@@ -75,10 +82,12 @@ async function generateRaw(opts) {
  * @template T
  */
 async function withConnectionProfile(fn) {
+    // Sidecar makes direct API calls — no need to switch ST profiles
+    if (isSidecarConfigured()) return fn();
+
     const settings = getSettings();
     const targetProfile = settings.connectionProfile;
     if (!targetProfile) {
-        console.log('[TunnelVision] No connection profile configured, using current API.');
         return fn();
     }
 
@@ -626,6 +635,32 @@ async function _generateSummariesForTree(rootNode, lorebookName, _isRoot = true,
                 console.warn('[TunnelVision] Failed to parse batched summary response:', e);
                 // Fallback: if only one entry in response, try to assign to first unsummarized node
             }
+        }
+    }
+
+    // Append deduplicated keywords from entries to each node's summary.
+    // This makes keywords directly visible to the AI during tree navigation
+    // without requiring a schema change or separate lookup.
+    for (const node of nodesToSummarize) {
+        if (!node.summary) continue;
+        const uids = getAllEntryUids(node);
+        const keywordSet = new Map();
+        for (const uid of uids) {
+            const entry = findEntryByUid(bookData.entries, uid);
+            if (entry?.key) {
+                for (const k of entry.key) {
+                    const trimmed = String(k).trim();
+                    // Deduplicate case-insensitively but preserve original casing
+                    if (trimmed && !keywordSet.has(trimmed.toLowerCase())) {
+                        keywordSet.set(trimmed.toLowerCase(), trimmed);
+                    }
+                }
+            }
+        }
+        if (keywordSet.size > 0) {
+            // Cap at 30 keywords to avoid bloating node summaries
+            const keywords = [...keywordSet.values()].slice(0, 30).join(', ');
+            node.summary = node.summary.replace(/\n\[Keywords:[^\]]*\]\s*$/, '') + `\n[Keywords: ${keywords}]`;
         }
     }
 

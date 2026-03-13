@@ -69,6 +69,17 @@
                         <div class="tv-help-text">Short description of what this lorebook contains. Shown to the AI when choosing which lorebook to write to. If empty, an auto-generated summary from the tree structure is used.</div>
                     </div>
 
+                    <!-- Per-Lorebook Permissions -->
+                    <div class="tv-setting-row">
+                        <label class="tv-label" for="tv_book_permission">Access Permission</label>
+                        <select id="tv_book_permission" class="tv-select">
+                            <option value="read_write">Read + Write (default)</option>
+                            <option value="read_only">Read Only (search works, writes blocked)</option>
+                            <option value="write_only">Write Only (no search, can write)</option>
+                        </select>
+                        <div class="tv-help-text">Controls what the AI can do with this lorebook. Read-only blocks Remember/Update/Forget. Write-only hides it from Search results.</div>
+                    </div>
+
                     <!-- Tree Building Section -->
                     <div class="tv-card">
                         <div class="tv-card-header">
@@ -453,6 +464,20 @@
 
                         <hr class="tv-adv-divider" />
 
+                        <!-- ═══ Compact Tool Prompts ═══ -->
+                        <div class="tv-adv-section">
+                            <div class="tv-setting-row">
+                                <label class="tv-toggle">
+                                    <input id="tv_compact_tool_prompts" type="checkbox" />
+                                    <span class="tv-toggle-slider"></span>
+                                    <span class="tv-toggle-label">Compact Tool Prompts</span>
+                                </label>
+                                <div class="tv-help-text">Reduces token usage by sending short tool descriptions with a central guide. The model can request full details on demand. Saves ~2000 tokens per generation.</div>
+                            </div>
+                        </div>
+
+                        <hr class="tv-adv-divider" />
+
                         <!-- ═══ Tool Toggles ═══ -->
                         <div class="tv-adv-section">
                             <div class="tv-adv-section-title">Tool Access</div>
@@ -669,15 +694,73 @@
 
                         <hr class="tv-adv-divider" />
 
-                        <!-- ═══ Connection Profile ═══ -->
+                        <!-- ═══ Sidecar LLM ═══ -->
                         <div class="tv-adv-section">
-                            <div class="tv-adv-section-title">Connection Profile</div>
+                            <div class="tv-adv-section-title">Sidecar LLM</div>
                             <div class="tv-help-text" style="margin-bottom: 8px;">
-                                Optional: Select a connection profile to use for TV's LLM operations (tree building, summaries, chat ingest). If set, TV will switch to this profile before LLM calls and restore the original after. Leave empty to use the current API settings.
+                                Optional: Select a connection profile for TV's LLM operations (tree building, summaries, chat ingest). TV will make direct API calls using the profile's provider, model, and endpoint with its own controlled samplers instead of your chat preset. Requires <b>allowKeysExposure: true</b> in ST's config.yaml. Leave empty to use ST's generateRaw with your current API settings.
                             </div>
-                            <select id="tv_connection_profile" class="tv-select">
+                            <select id="tv_connection_profile" class="tv-select" style="margin-bottom: 6px;">
                                 <option value="">(Use current API settings)</option>
                             </select>
+                            <div id="tv_sidecar_sampler_fields" style="display: none;">
+                                <div style="display: flex; gap: 8px; align-items: center;">
+                                    <div style="flex: 1;">
+                                        <label class="tv-label" for="tv_sidecar_temperature">Temperature: <span id="tv_sidecar_temp_val">0.2</span></label>
+                                        <input type="range" id="tv_sidecar_temperature" min="0" max="1" step="0.05" value="0.2" />
+                                    </div>
+                                    <div style="flex: 1;">
+                                        <label class="tv-label" for="tv_sidecar_max_tokens">Max Tokens</label>
+                                        <input type="number" id="tv_sidecar_max_tokens" class="tv-number-input" min="256" max="32768" step="256" value="2048" />
+                                    </div>
+                                </div>
+                                <!-- Auto-Retrieval (pre-gen) -->
+                                <div style="margin-top: 10px; border-top: 1px solid var(--SmartThemeBorderColor); padding-top: 8px;">
+                                    <label class="tv-toggle">
+                                        <input id="tv_sidecar_auto_retrieval" type="checkbox" />
+                                        <span class="tv-toggle-slider"></span>
+                                        <span class="tv-toggle-label">Auto-Retrieve Before Generation</span>
+                                    </label>
+                                    <div class="tv-help-text" style="margin-top: 4px;">
+                                        Before each generation, the sidecar navigates the tree and injects relevant entries into context. Uses your mandatory prompt position/depth/role settings for injection placement.
+                                    </div>
+                                    <div id="tv_sidecar_retrieval_fields" style="display: none; margin-top: 8px;">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <div style="flex: 1;">
+                                                <label class="tv-label" for="tv_sidecar_context_messages">Chat Context (messages)</label>
+                                                <input type="number" id="tv_sidecar_context_messages" class="tv-number-input" min="1" max="50" step="1" value="10" />
+                                            </div>
+                                            <div style="flex: 1;">
+                                                <label class="tv-label" for="tv_sidecar_max_injection">Max Injection (tokens)</label>
+                                                <input type="number" id="tv_sidecar_max_injection" class="tv-number-input" min="500" max="16000" step="500" value="4000" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Post-Gen Writer -->
+                                <div style="margin-top: 10px; border-top: 1px solid var(--SmartThemeBorderColor); padding-top: 8px;">
+                                    <label class="tv-toggle">
+                                        <input id="tv_sidecar_post_gen_writer" type="checkbox" />
+                                        <span class="tv-toggle-slider"></span>
+                                        <span class="tv-toggle-label">Auto-Write After Generation</span>
+                                    </label>
+                                    <div class="tv-help-text" style="margin-top: 4px;">
+                                        After each response, the sidecar reviews the conversation and automatically creates or updates lorebook entries for significant events, character changes, and new facts.
+                                    </div>
+                                    <div id="tv_sidecar_writer_fields" style="display: none; margin-top: 8px;">
+                                        <div style="display: flex; gap: 8px; align-items: center;">
+                                            <div style="flex: 1;">
+                                                <label class="tv-label" for="tv_sidecar_writer_context">Chat Context (messages)</label>
+                                                <input type="number" id="tv_sidecar_writer_context" class="tv-number-input" min="1" max="50" step="1" value="15" />
+                                            </div>
+                                            <div style="flex: 1;">
+                                                <label class="tv-label" for="tv_sidecar_writer_max_ops">Max Operations Per Turn</label>
+                                                <input type="number" id="tv_sidecar_writer_max_ops" class="tv-number-input" min="1" max="10" step="1" value="5" />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

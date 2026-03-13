@@ -20,6 +20,7 @@ import { getContext } from '../../../../st-context.js';
 import { hideChatMessageRange } from '../../../../chats.js';
 
 export const TOOL_NAME = 'TunnelVision_Summarize';
+export const COMPACT_DESCRIPTION = 'Create a scene or event summary to preserve significant narrative beats in long-term memory.';
 
 const SUMMARIES_NODE_LABEL = 'Summaries';
 const WATERMARK_KEY = 'tunnelvision_summary_watermark';
@@ -73,6 +74,16 @@ export async function hideSummarizedMessages(messagesBack, overrideStart, overri
     } else {
         // Fallback: use watermark
         const watermark = getWatermark();
+        if (watermark < 0) {
+            // Watermark has never been set (first-ever summary in this chat).
+            // Refusing to hide because the fallback range would cover the entire
+            // chat from message 1, which is almost always wrong. The watermark
+            // will be set after this summary completes (line below), so future
+            // summaries will have a safe range.
+            console.log('[TunnelVision] Skipping auto-hide: no watermark set yet (first summary in this chat). Setting watermark to current position.');
+            setWatermark(currentMsgId - 1);
+            return null;
+        }
         hideStart = watermark + 1;
         hideEnd = currentMsgId - 1;
     }
@@ -108,8 +119,14 @@ export async function hideSummarizedMessages(messagesBack, overrideStart, overri
  * @returns {string|null} Node ID of the Summaries category, or null if no tree
  */
 function ensureSummariesNode(bookName) {
-    const tree = getTree(bookName);
-    if (!tree || !tree.root) return null;
+    let tree = getTree(bookName);
+    if (!tree || !tree.root) {
+        // No tree exists yet -- create a minimal one so summaries have a home
+        const root = createTreeNode('Root', `Top-level index for ${bookName}`);
+        tree = { lorebookName: bookName, root, version: 1, lastBuilt: Date.now() };
+        saveTree(bookName, tree);
+        console.log(`[TunnelVision] Created minimal tree for "${bookName}" to host summaries`);
+    }
 
     // Look for existing Summaries node (direct child of root)
     for (const child of (tree.root.children || [])) {
@@ -194,7 +211,7 @@ When you notice related events forming a pattern or storyline, group them into "
                 return 'Missing required fields: title and summary are required.';
             }
 
-            const { book: lorebook, error } = resolveTargetBook(args.lorebook);
+            const { book: lorebook, error } = resolveTargetBook(args.lorebook, { checkWrite: true });
             if (error) return error;
 
             // Ensure the Summaries category exists

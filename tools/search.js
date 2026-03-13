@@ -17,7 +17,7 @@ import {
     getAllEntryUids,
     getSettings,
 } from '../tree-store.js';
-import { getActiveTunnelVisionBooks } from '../tool-registry.js';
+import { getReadableBooks } from '../tool-registry.js';
 
 /**
  * Build a UID→entry lookup map from lorebook data.
@@ -34,6 +34,7 @@ function buildUidMap(entries) {
 }
 
 export const TOOL_NAME = 'TunnelVision_Search';
+export const COMPACT_DESCRIPTION = 'Navigate and search the lorebook tree to retrieve relevant entries for the current scene.';
 
 // ─── Multi-Document Constants ────────────────────────────────────
 
@@ -68,7 +69,7 @@ function resolveDocNodeBook(nodeId) {
     if (!isDocNode(nodeId)) return null;
     const suffix = nodeId.slice(DOC_NODE_PREFIX.length);
     // Try exact match first (bookName may have had chars replaced with _)
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     for (const bookName of activeBooks) {
         if (docNodeId(bookName) === nodeId) return bookName;
     }
@@ -85,7 +86,7 @@ function resolveDocNodeBook(nodeId) {
  * @returns {string}
  */
 function buildTopLevelOverview() {
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return '';
 
     // Single lorebook: show its children directly (no document-level indirection)
@@ -157,7 +158,7 @@ function formatChildrenForNavigation(parentNode) {
  * @returns {string}
  */
 function buildUnifiedTreeOverview() {
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return '';
 
     // Single lorebook: no need for unified mode, use normal view
@@ -197,7 +198,7 @@ function buildUnifiedTreeOverview() {
  * @returns {string}
  */
 function buildUnifiedCollapsedOverview(maxDepth = Infinity) {
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return '';
 
     if (activeBooks.length === 1) {
@@ -231,7 +232,7 @@ function buildUnifiedCollapsedOverview(maxDepth = Infinity) {
  * @returns {string}
  */
 function buildCollapsedTreeOverview(maxDepth = Infinity) {
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return '';
 
     const multiDoc = activeBooks.length > 1;
@@ -334,7 +335,7 @@ async function resolveNodeEntries(nodeId, seenEntries = new Set()) {
     }
 
     // Regular node: search across all active books
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     for (const bookName of activeBooks) {
         const tree = getTree(bookName);
         if (!tree || !tree.root) continue;
@@ -402,7 +403,7 @@ async function buildEntryManifest(nodeId) {
         if (!bookData?.entries) return { manifest: '', count: 0 };
         resolveFromBook(bookName, buildUidMap(bookData.entries), uids);
     } else {
-        for (const bookName of getActiveTunnelVisionBooks()) {
+        for (const bookName of getReadableBooks()) {
             const tree = getTree(bookName);
             if (!tree?.root) continue;
             const node = findNodeById(tree.root, nodeId);
@@ -427,7 +428,7 @@ async function resolveEntriesByUid(uids) {
     const results = [];
     const seen = new Set();
 
-    for (const bookName of getActiveTunnelVisionBooks()) {
+    for (const bookName of getReadableBooks()) {
         const bookData = await loadWorldInfo(bookName);
         if (!bookData?.entries) continue;
         const uidMap = buildUidMap(bookData.entries);
@@ -464,7 +465,7 @@ function findNodeAcrossBooks(nodeId) {
         return { node: tree.root, bookName, isDocNode: true };
     }
 
-    for (const bookName of getActiveTunnelVisionBooks()) {
+    for (const bookName of getReadableBooks()) {
         const tree = getTree(bookName);
         if (!tree || !tree.root) continue;
         const node = findNodeById(tree.root, nodeId);
@@ -481,7 +482,7 @@ function findNodeAcrossBooks(nodeId) {
  * @returns {string} Tree overview text to append to the description, or empty string
  */
 export function getTreeOverview() {
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return '';
 
     let hasValidTree = false;
@@ -527,7 +528,7 @@ export function getTreeOverview() {
  * @returns {Object|null} Tool definition or null if no valid trees exist
  */
 export function getDefinition() {
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return null;
 
     let hasValidTree = false;
@@ -605,10 +606,6 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
                     type: 'string',
                     description: 'For action "search": keyword or phrase to find across all lorebooks. Matches entry titles, keywords, and content.',
                 },
-                reasoning: {
-                    type: 'string',
-                    description: 'Brief explanation of why these nodes are relevant to the current scene.',
-                },
                 ...entryUidsParam,
             },
         }
@@ -629,10 +626,6 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
                     type: 'string',
                     description: 'For action "search": keyword or phrase to find across all lorebooks. Matches entry titles, keywords, and content.',
                 },
-                reasoning: {
-                    type: 'string',
-                    description: 'Brief explanation of why this branch is relevant to the current scene.',
-                },
                 ...entryUidsParam,
             },
         };
@@ -643,10 +636,6 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
         description,
         parameters,
         action: async (args) => {
-            if (args.reasoning) {
-                console.log(`[TunnelVision] Search | ${args.reasoning}`);
-            }
-
             // Selective retrieval: resolve specific entries by UID
             if (selective && Array.isArray(args.entry_uids) && args.entry_uids.length > 0) {
                 return handleSelectiveEntryRetrieval(args.entry_uids);
@@ -673,7 +662,7 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
         shouldRegister: async () => {
             const settings = getSettings();
             if (settings.globalEnabled === false) return false;
-            return getActiveTunnelVisionBooks().length > 0;
+            return getReadableBooks().length > 0;
         },
         stealth: false,
     };
@@ -858,7 +847,7 @@ async function handleCrossBookSearch(args, selective = false) {
     }
 
     const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const activeBooks = getActiveTunnelVisionBooks();
+    const activeBooks = getReadableBooks();
     const results = [];
 
     for (const bookName of activeBooks) {

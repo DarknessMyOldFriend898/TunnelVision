@@ -163,7 +163,11 @@ function onGenerationStartedCommand() {
     const targetLorebook = resolveCurrentLorebook(activeBooks);
     const prompt = buildCommandPrompt(parsed, contextMessages, activeBooks, targetLorebook);
 
-    $textarea.val('').trigger('input');
+    // Replace the !command text with a neutral user message so ST still calls
+    // sendMessageAsUser(). Clearing the textarea entirely causes Claude to error
+    // with "conversation must end with a user message" since no user turn is added.
+    const userFacingText = `[${prefix}${parsed.command}${parsed.arg ? ` ${parsed.arg}` : ''}]`;
+    $textarea.val(userFacingText).trigger('input');
     setExtensionPrompt(TV_CMD_PROMPT_KEY, prompt, extension_prompt_types.IN_PROMPT, 0);
 }
 

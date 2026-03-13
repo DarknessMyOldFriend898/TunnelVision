@@ -274,6 +274,8 @@ export const SETTING_DEFAULTS = {
     selectedLorebook: null,
     bookDescriptions: {},
     connectionProfile: null,
+    sidecarTemperature: 0.2,
+    sidecarMaxTokens: 2048,
     disabledTools: {},
     searchMode: 'traversal',
     collapsedDepth: 2,
@@ -307,6 +309,18 @@ export const SETTING_DEFAULTS = {
     passthroughConstant: true,
     confirmTools: {},
     toolPromptOverrides: {},
+    // Sidecar auto-retrieval (pre-gen)
+    sidecarAutoRetrieval: false,
+    sidecarContextMessages: 10,
+    sidecarMaxInjectionTokens: 4000,
+    // Sidecar post-gen writer
+    sidecarPostGenWriter: false,
+    sidecarWriterContextMessages: 15,
+    sidecarWriterMaxOps: 5,
+    // Per-lorebook permissions: { bookName: 'read_write' | 'read_only' | 'write_only' }
+    bookPermissions: {},
+    // Compact tool prompts: register one guide tool + one-liner descriptions to save tokens
+    compactToolPrompts: false,
 };
 
 function ensureSettings() {
@@ -539,6 +553,54 @@ export function getConnectionProfileName(profileRef = null) {
 
 export function listConnectionProfiles() {
     return [...getConnectionProfiles()];
+}
+
+// ─── Per-Lorebook Permissions ────────────────────────────────────
+
+/**
+ * Get the permission level for a lorebook.
+ * @param {string} bookName
+ * @returns {'read_write'|'read_only'|'write_only'}
+ */
+export function getBookPermission(bookName) {
+    ensureSettings();
+    return extension_settings[EXTENSION_NAME].bookPermissions[bookName] || 'read_write';
+}
+
+/**
+ * Set the permission level for a lorebook.
+ * @param {string} bookName
+ * @param {'read_write'|'read_only'|'write_only'} permission
+ */
+export function setBookPermission(bookName, permission) {
+    ensureSettings();
+    if (permission === 'read_write') {
+        // Default — remove from map to keep it clean
+        delete extension_settings[EXTENSION_NAME].bookPermissions[bookName];
+    } else {
+        extension_settings[EXTENSION_NAME].bookPermissions[bookName] = permission;
+    }
+    saveSettingsDebounced();
+}
+
+/**
+ * Check if a lorebook allows read (Search) operations.
+ * @param {string} bookName
+ * @returns {boolean}
+ */
+export function canReadBook(bookName) {
+    const perm = getBookPermission(bookName);
+    return perm === 'read_write' || perm === 'read_only';
+}
+
+/**
+ * Check if a lorebook allows write (Remember/Update/Forget) operations.
+ * @param {string} bookName
+ * @returns {boolean}
+ */
+export function canWriteBook(bookName) {
+    const perm = getBookPermission(bookName);
+    return perm === 'read_write' || perm === 'write_only';
 }
 
 export function isTrackerTitle(title) {

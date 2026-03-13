@@ -9,6 +9,7 @@ import { getContext } from '../../../st-context.js';
 import { ALL_TOOL_NAMES, getActiveTunnelVisionBooks } from './tool-registry.js';
 import { getSettings, isLorebookEnabled, getTree } from './tree-store.js';
 import { openTreeEditorForBook } from './ui-controller.js';
+import { getSidecarModelLabel } from './llm-sidecar.js';
 
 const MAX_FEED_ITEMS = 50;
 const MAX_RENDERED_RETRIEVED_ENTRIES = 5;
@@ -45,6 +46,8 @@ let turnToolCalls = [];
  * @property {string} [title]
  * @property {string[]} [keys]
  * @property {RetrievedEntry[]} [retrievedEntries]
+ * @property {string} [reasoning]
+ * @property {string} [sidecarRaw]
  */
 
 /** @type {FeedItem[]} */
@@ -111,10 +114,20 @@ export function initActivityFeed() {
         });
     }
 
-    // Reset turn accumulator each generation
+    // Reset turn tool-call accumulator on first generation pass (not recursive).
+    // Feed items are NOT cleared automatically — they accumulate across turns so
+    // the user can see a running history. Use the trash button to clear manually.
     if (event_types.GENERATION_STARTED) {
         eventSource.on(event_types.GENERATION_STARTED, () => {
-            turnToolCalls = [];
+            try {
+                const lastMsg = getContext().chat?.at(-1);
+                const isRecursiveToolPass = lastMsg?.extra?.tool_invocations != null;
+                if (!isRecursiveToolPass) {
+                    turnToolCalls = [];
+                }
+            } catch {
+                turnToolCalls = [];
+            }
         });
     }
     if (event_types.MESSAGE_RECEIVED) {
@@ -384,18 +397,33 @@ function onWorldInfoActivated(entries) {
     const activeBooks = getActiveTunnelVisionBooks();
     if (activeBooks.length === 0) return;
 
+    // Build a set of UIDs already in the feed to deduplicate constant entries
+    // (which fire every generation pass). Only dedup native/entry items.
+    const existingUids = new Set();
+    for (const item of feedItems) {
+        if (item.type === 'entry' && item.source === 'native' && item.uid != null) {
+            existingUids.add(`${item.lorebook}::${item.uid}`);
+        }
+    }
+
     const timestamp = Date.now();
     const items = [];
     for (const entry of entries) {
         // Only show entries from TV-managed lorebooks
         if (entry.world && !isLorebookEnabled(entry.world)) continue;
 
+        // Skip entries already shown in the feed (constant entries re-fire every pass)
+        const uid = Number.isFinite(entry?.uid) ? entry.uid : null;
+        const dedupKey = `${entry.world || ''}::${uid}`;
+        if (uid != null && existingUids.has(dedupKey)) continue;
+
         items.push(createEntryFeedItem({
             source: 'native',
             lorebook: typeof entry?.world === 'string' ? entry.world : '',
-            uid: Number.isFinite(entry?.uid) ? entry.uid : null,
+            uid,
             title: entry.comment || entry.key?.[0] || `UID ${entry.uid}`,
             keys: Array.isArray(entry.key) ? entry.key : [],
+            constant: !!entry.constant,
             timestamp,
         }));
     }
@@ -448,6 +476,7 @@ function onToolCallsPerformed(invocations) {
             summary,
             timestamp,
             retrievedEntries,
+            reasoning: invocation.reasoning || '',
         });
 
         // Accumulate for end-of-turn console summary
@@ -523,8 +552,14 @@ function renderAllItems() {
         return;
     }
 
+    // Sort: active items first (by recency), constant entries pushed to bottom
+    const sorted = [...filtered].sort((a, b) => {
+        if (a.constant !== b.constant) return a.constant ? 1 : -1;
+        return 0; // preserve insertion order within each group
+    });
+
     panelBody.replaceChildren();
-    for (const item of filtered) {
+    for (const item of sorted) {
         panelBody.appendChild(buildItemElement(item));
     }
 }
@@ -534,6 +569,7 @@ function buildItemElement(item) {
     if (item.type === 'entry') {
         rowClasses.push('tv-float-item-entry');
         rowClasses.push(item.source === 'native' ? 'tv-float-item-entry-native' : 'tv-float-item-entry-tv');
+        if (item.constant) rowClasses.push('tv-float-item-constant');
     } else if (item.type === 'wi') {
         // Legacy feed items from before the type rename
         rowClasses.push('tv-float-item-wi');
@@ -554,11 +590,41 @@ function buildItemElement(item) {
     verb.style.color = item.color;
     textRow.appendChild(verb);
 
+    // Source label — shows "Sidecar (model)" or nothing (chat model is the default/implied)
+    if (item.isSidecar) {
+        const modelText = item.sidecarModel ? `Sidecar: ${item.sidecarModel}` : 'Sidecar';
+        const srcLabel = el('span', 'tv-float-item-source', modelText);
+        srcLabel.title = item.sidecarModel || 'Sidecar LLM';
+        textRow.appendChild(srcLabel);
+    }
+
     const summaryText = (item.type === 'entry')
         ? formatEntrySummary(item, shouldIncludeLorebookForEntries())
         : (item.summary || '');
     textRow.appendChild(el('span', 'tv-float-item-summary', summaryText));
     body.appendChild(textRow);
+
+    if (item.reasoning) {
+        const detailsWrap = el('div', 'tv-float-item-details-wrap');
+        const toggle = el('span', 'tv-float-item-details-toggle', '▶ Details');
+        const details = el('div', 'tv-float-item-details');
+
+        if (item.reasoning) {
+            const reasonRow = el('div', 'tv-float-item-details-reason');
+            reasonRow.appendChild(el('span', 'tv-float-item-details-label', 'Reasoning: '));
+            reasonRow.appendChild(el('span', null, item.reasoning));
+            details.appendChild(reasonRow);
+        }
+
+        toggle.addEventListener('click', () => {
+            const open = details.classList.toggle('tv-float-item-details-open');
+            toggle.textContent = open ? '▼ Details' : '▶ Details';
+        });
+
+        detailsWrap.appendChild(toggle);
+        detailsWrap.appendChild(details);
+        body.appendChild(detailsWrap);
+    }
 
     // Keys (for entry items)
     if (item.keys?.length > 0) {
@@ -616,6 +682,15 @@ function pulseTrigger() {
     setTimeout(() => triggerEl.classList.remove('tv-float-pulse'), 600);
 }
 
+/**
+ * Show a visual indicator on the trigger button that the sidecar is working.
+ * Call setSidecarActive(false) when the sidecar finishes.
+ */
+export function setSidecarActive(active) {
+    if (!triggerEl) return;
+    triggerEl.classList.toggle('tv-float-sidecar-active', active);
+}
+
 function trimFeed() {
     if (feedItems.length > MAX_FEED_ITEMS) {
         feedItems = feedItems.slice(0, MAX_FEED_ITEMS);
@@ -628,9 +703,13 @@ function addFeedItems(items) {
 
     feedItems = [...items, ...feedItems];
     trimFeed();
-    updateBadge(items.length);
+    // Only count non-constant items in the badge — constant entries are always-on background noise
+    const badgeCount = items.filter(i => !i.constant).length;
+    if (badgeCount > 0) {
+        updateBadge(badgeCount);
+        pulseTrigger();
+    }
     if (panelEl?.classList.contains('open')) renderAllItems();
-    pulseTrigger();
 }
 
 // ── Hidden Tool Call (Visual Hiding) ──
@@ -746,20 +825,103 @@ export function clearFeed() {
     if (panelEl?.classList.contains('open')) renderAllItems();
 }
 
+/**
+ * Clear the feed at the start of a new generation turn.
+ * Unlike clearFeed() (user-triggered), this is automatic and silent.
+ */
+function clearFeedForNewTurn() {
+    feedItems = [];
+    saveFeed();
+    if (triggerEl) triggerEl.setAttribute('data-tv-count', '0');
+    if (panelEl?.classList.contains('open')) renderAllItems();
+    console.debug('[TunnelVision] Activity feed cleared for new turn');
+}
+
 export function getFeedItems() {
     return [...feedItems];
 }
 
+/**
+ * Log a sidecar write operation to the activity feed.
+ * Called by sidecar-writer.js after each successful operation.
+ * @param {'remember'|'update'} opType
+ * @param {Object} details
+ * @param {string} [details.lorebook]
+ * @param {string} [details.title]
+ * @param {number|null} [details.uid]
+ * @param {string} [details.summary]
+ * @param {string} [details.reasoning]
+ */
+export function logSidecarWrite(opType, { lorebook = '', title = '', uid = null, summary = '', reasoning = '' } = {}) {
+    const display = opType === 'remember'
+        ? { icon: 'fa-brain', verb: 'Sidecar Remembered', color: '#a29bfe' }
+        : { icon: 'fa-pen', verb: 'Sidecar Updated', color: '#fdcb6e' };
+
+    const modelLabel = getSidecarModelLabel();
+    const items = [{
+        id: nextId++,
+        type: 'tool',
+        icon: display.icon,
+        verb: display.verb,
+        color: display.color,
+        summary: summary || title || `UID ${uid ?? '?'}`,
+        timestamp: Date.now(),
+        isSidecar: true,
+        sidecarModel: modelLabel,
+        reasoning,
+    }];
+
+    addFeedItems(items);
+}
+
+/**
+ * Log a sidecar auto-retrieval to the activity feed.
+ * Called by sidecar-retrieval.js after successful injection.
+ * @param {Object} details
+ * @param {string[]} [details.nodeIds] - The node IDs retrieved
+ * @param {number} [details.charCount] - Approximate character count injected
+ * @param {string} [details.reasoning]
+ */
+export function logSidecarRetrieval({ nodeIds = [], nodeLabels = [], charCount = 0, reasoning = '' } = {}) {
+    const labels = nodeLabels.length > 0 ? nodeLabels : nodeIds;
+    let summary;
+    if (labels.length === 1) {
+        summary = `"${labels[0]}"`;
+    } else if (labels.length <= 3) {
+        summary = labels.map(l => `"${l}"`).join(', ');
+    } else {
+        summary = `${labels.slice(0, 2).map(l => `"${l}"`).join(', ')} +${labels.length - 2} more`;
+    }
+
+    const modelLabel = getSidecarModelLabel();
+    const items = [{
+        id: nextId++,
+        type: 'tool',
+        icon: 'fa-satellite-dish',
+        verb: 'Sidecar Retrieved',
+        color: '#00b894',
+        summary,
+        timestamp: Date.now(),
+        isSidecar: true,
+        sidecarModel: modelLabel,
+        reasoning,
+    }];
+
+    addFeedItems(items);
+}
+
 // ── Entry / Retrieved Entry Helpers ──
 
-function createEntryFeedItem({ source, lorebook = '', uid = null, title = '', keys = [], timestamp }) {
+
+function createEntryFeedItem({ source, lorebook = '', uid = null, title = '', keys = [], constant = false, timestamp }) {
     return {
         id: nextId++,
         type: 'entry',
         source,
-        icon: 'fa-book-open',
-        verb: source === 'native' ? 'Triggered' : 'Injected',
-        color: source === 'native' ? '#e84393' : '#fdcb6e',
+        constant,
+        icon: constant ? 'fa-thumbtack' : 'fa-book-open',
+        verb: constant ? 'Constant' : (source === 'native' ? 'Triggered' : 'Injected'),
+        color: constant ? '#636e72' : (source === 'native' ? '#e84393' : '#fdcb6e'),
         lorebook,
         uid,
         title,

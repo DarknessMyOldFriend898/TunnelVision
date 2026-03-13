@@ -14,6 +14,7 @@ import { createEntry } from '../entry-manager.js';
 import { getActiveTunnelVisionBooks, resolveTargetBook, getBookListWithDescriptions } from '../tool-registry.js';
 
 export const TOOL_NAME = 'TunnelVision_Remember';
+export const COMPACT_DESCRIPTION = 'Save a new fact, character detail, relationship, or world-building info to long-term memory.';
 
 // ─── Trigram Similarity ─────────────────────────────────────────
 
@@ -143,7 +144,7 @@ Save entries to the lorebook where they belong based on the descriptions above. 
                 return 'Missing required fields: title and content are required.';
             }
 
-            const { book: lorebook, error } = resolveTargetBook(args.lorebook);
+            const { book: lorebook, error } = resolveTargetBook(args.lorebook, { checkWrite: true });
             if (error) return error;
 
             // Dedup check (non-blocking — warns but still saves)

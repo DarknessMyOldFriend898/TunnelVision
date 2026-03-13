@@ -12,6 +12,7 @@ import { forgetEntry } from '../entry-manager.js';
 import { getActiveTunnelVisionBooks, resolveTargetBook, getBookListWithDescriptions } from '../tool-registry.js';
 
 export const TOOL_NAME = 'TunnelVision_Forget';
+export const COMPACT_DESCRIPTION = 'Disable or remove a lorebook entry that is outdated, wrong, or no longer relevant.';
 
 /**
  * Returns the tool definition for ToolManager.registerFunctionTool().
@@ -57,7 +58,7 @@ ${bookDesc}`,
                 return 'Missing required fields: uid and reason are required.';
             }
 
-            const { book: lorebook, error } = resolveTargetBook(args.lorebook);
+            const { book: lorebook, error } = resolveTargetBook(args.lorebook, { checkWrite: true });
             if (error) return error;
 
             try {

@@ -17,8 +17,6 @@ import {
     saveTree,
     getBookDescription,
     isTrackerTitle,
-    getConnectionProfileId,
-    findConnectionProfile,
 } from './tree-store.js';
 import { getContext } from '../../../st-context.js';
 import { getActiveTunnelVisionBooks, ALL_TOOL_NAMES, CONFIRMABLE_TOOLS, preflightToolRuntimeState } from './tool-registry.js';
@@ -47,6 +45,7 @@ export async function runDiagnostics() {
     results.push(...checkTreesValid());
     results.push(...await checkEntryUidsValid());
     results.push(...checkNodeSummaries());
+    results.push(...checkNodeKeywords());
     results.push(...checkDuplicateUids());
     results.push(...await checkNearDuplicateEntries());
     results.push(...await checkEmptyLorebooks());
@@ -80,15 +79,19 @@ export async function runDiagnostics() {
     results.push(checkCommandsConfig());
     results.push(checkAutoSummaryConfig());
     results.push(checkMultiBookMode());
-    results.push(checkConnectionProfile());
+    results.push(await checkSidecarConfig());
     results.push(...await checkTrackerUids());
     results.push(...checkArcNodes());
     results.push(checkNotebookConfig());
     results.push(checkStealthMode());
+    results.push(checkCompactToolPrompts());
     results.push(checkEphemeralResults());
     results.push(checkAutoHideSummarized());
     results.push(checkConstantPassthrough());
     results.push(...checkBookDescriptions());
+    results.push(...checkBookPermissions());
+    results.push(checkSidecarAutoRetrieval());
+    results.push(checkSidecarPostGenWriter());
     results.push(checkTurnSummaryEvent());
 
     const settingsAfter = JSON.stringify(getSettings());
@@ -453,6 +456,50 @@ function checkNodeSummaries() {
             results.push(warn(`${nodesWithSummary}/${totalNodes} nodes in "${bookName}" have summaries (${pct}%). Rebuild with LLM for better retrieval.`));
         } else {
             results.push(warn(`Only ${nodesWithSummary}/${totalNodes} nodes in "${bookName}" have summaries. Tree traversal quality will be poor without summaries. Use "Build With LLM" to generate them.`));
+        }
+    }
+
+    return results;
+}
+
+/** Check that node summaries include keyword footers for better AI retrieval. */
+function checkNodeKeywords() {
+    const results = [];
+    const activeBooks = getActiveTunnelVisionBooks();
+
+    for (const bookName of activeBooks) {
+        const tree = getTree(bookName);
+        if (!tree || !tree.root) continue;
+
+        let nodesWithEntries = 0;
+        let nodesWithKeywords = 0;
+
+        function checkNode(node, isRoot) {
+            if (isRoot) {
+                for (const child of (node.children || [])) checkNode(child, false);
+                return;
+            }
+            const uids = getAllEntryUids(node);
+            if (uids.length > 0 && node.summary) {
+                nodesWithEntries++;
+                if (/\[Keywords:/.test(node.summary)) {
+                    nodesWithKeywords++;
+                }
+            }
+            for (const child of (node.children || [])) checkNode(child, false);
+        }
+
+        checkNode(tree.root, true);
+
+        if (nodesWithEntries === 0) continue;
+
+        const pct = Math.round((nodesWithKeywords / nodesWithEntries) * 100);
+        if (pct === 100) {
+            results.push(pass(`All ${nodesWithEntries} nodes with entries in "${bookName}" have keyword footers`));
+        } else if (pct > 0) {
+            results.push(warn(`${nodesWithKeywords}/${nodesWithEntries} nodes in "${bookName}" have keyword footers (${pct}%). Rebuild with LLM to add keywords for better retrieval.`));
+        } else {
+            results.push(warn(`No nodes in "${bookName}" have keyword footers. Rebuild with LLM to add entry keywords to node summaries for improved AI navigation.`));
         }
     }
 
@@ -1004,8 +1051,14 @@ function checkPromptInjectionSettings() {
             settings.mandatoryPromptRole = 'system';
             fixed = (fixed || '') + ' Auto-reset invalid mandatory prompt role to "system".';
         }
+        // in_chat + user role can bisect tool_use/tool_result pairs on Anthropic/Claude,
+        // causing "unexpected tool_use_id" errors. Auto-fix to system role.
+        if (settings.mandatoryPromptPosition === 'in_chat' && settings.mandatoryPromptRole === 'user') {
+            settings.mandatoryPromptRole = 'system';
+            fixed = (fixed || '') + ' Auto-reset mandatory prompt role from "user" to "system" (user role with in_chat can break tool call pairing on Claude/Anthropic).';
+        }
         if (settings.mandatoryPromptPosition === 'in_prompt' && settings.mandatoryPromptDepth > 0) {
-            warnings.push('Mandatory prompt is set to "In System Prompt" — depth is ignored in this mode.');
+            warnings.push('Mandatory prompt is set to "In System Prompt" -- depth is ignored in this mode.');
         }
         if (!settings.mandatoryPromptText || settings.mandatoryPromptText.trim().length === 0) {
             warnings.push('Mandatory tools is enabled but the prompt text is empty. The model will receive no instruction.');
@@ -1021,6 +1074,11 @@ function checkPromptInjectionSettings() {
         if (!validRoles.includes(settings.notebookPromptRole)) {
             settings.notebookPromptRole = 'system';
             fixed = (fixed || '') + ' Auto-reset invalid notebook prompt role to "system".';
+        }
+        // Same in_chat + user role guard for notebook
+        if (settings.notebookPromptPosition === 'in_chat' && settings.notebookPromptRole === 'user') {
+            settings.notebookPromptRole = 'system';
+            fixed = (fixed || '') + ' Auto-reset notebook prompt role from "user" to "system" (user role with in_chat can break tool call pairing on Claude/Anthropic).';
         }
     }
 
@@ -1103,23 +1161,46 @@ function checkMultiBookMode() {
     return warn(`Invalid multi-book mode "${oldValue}". Auto-reset to "unified".`);
 }
 
-/** Check connection profile reference is valid and Connection Manager is available. */
-function checkConnectionProfile() {
-    const profileId = getConnectionProfileId();
+/** Check sidecar LLM configuration: connection profile, API key availability. */
+async function checkSidecarConfig() {
+    const settings = getSettings();
+    const profileId = settings.connectionProfile;
+
     if (!profileId) {
-        return pass('Connection profile: using current API settings');
+        return pass('Sidecar LLM: not configured (using ST generateRaw fallback)');
     }
 
-    const cmSettings = extension_settings?.connectionManager;
-    if (!cmSettings) {
-        return warn(`Connection profile "${profileId}" is set but Connection Manager is not loaded. Profile switching will fall back to the current API.`);
-    }
-
+    const { findConnectionProfile } = await import('./tree-store.js');
     const profile = findConnectionProfile(profileId);
+
     if (!profile) {
-        return warn(`Connection profile ID "${profileId}" was not found in Connection Manager. It may have been deleted.`);
+        return warn(`Sidecar: Connection profile "${profileId}" not found. It may have been deleted from Connection Manager.`);
     }
-    return pass(`Connection profile: "${profile.name}" (${profile.id})`);
+
+    if (!profile.api || !profile.model) {
+        return warn(`Sidecar: Connection profile "${profile.name}" is missing API provider or model. Sidecar calls will fall back to generateRaw.`);
+    }
+
+    // Verify API key is available via ST's secrets system
+    try {
+        const { fetchSecretKey } = await import('./llm-sidecar.js');
+        const PROVIDER_SECRET_MAP = {
+            openai: 'api_key_openai', claude: 'api_key_claude', openrouter: 'api_key_openrouter',
+            makersuite: 'api_key_makersuite', deepseek: 'api_key_deepseek', mistralai: 'api_key_mistralai',
+            groq: 'api_key_groq', custom: 'api_key_custom', xai: 'api_key_xai',
+        };
+        const secretKey = PROVIDER_SECRET_MAP[profile.api];
+        if (secretKey) {
+            const key = await fetchSecretKey(secretKey);
+            if (!key) {
+                return warn(`Sidecar: No API key found for "${profile.api}". Add your key in ST's API settings and ensure allowKeysExposure is enabled in config.yaml.`);
+            }
+        }
+    } catch (e) {
+        return warn(`Sidecar: Failed to verify API key: ${e.message}`);
+    }
+
+    return pass(`Sidecar LLM: "${profile.name}" (${profile.api} / ${profile.model})`);
 }
 
 /** Check tracker UIDs reference valid entries, auto-remove stale, auto-detect title-based trackers. */
@@ -1263,6 +1344,15 @@ function checkStealthMode() {
     return pass('Hide tool-call messages: off (tool calls visible in chat)');
 }
 
+/** Check compact tool prompts configuration. */
+function checkCompactToolPrompts() {
+    const settings = getSettings();
+    if (settings.compactToolPrompts) {
+        return pass('Compact tool prompts: enabled (guide tool replaces verbose descriptions)');
+    }
+    return pass('Compact tool prompts: disabled (full descriptions sent per tool)');
+}
+
 /** Check ephemeral tool results configuration. */
 function checkEphemeralResults() {
     const settings = getSettings();
@@ -1360,6 +1450,74 @@ function checkBookDescriptions() {
     }
 
     return results;
+}
+
+function checkBookPermissions() {
+    const results = [];
+    const settings = getSettings();
+    const perms = settings.bookPermissions || {};
+    const activeBooks = getActiveTunnelVisionBooks();
+
+    if (Object.keys(perms).length === 0) {
+        return results; // All defaults — nothing to report
+    }
+
+    const readOnly = activeBooks.filter(b => perms[b] === 'read_only');
+    const writeOnly = activeBooks.filter(b => perms[b] === 'write_only');
+    const readable = activeBooks.filter(b => perms[b] !== 'write_only');
+    const writable = activeBooks.filter(b => perms[b] !== 'read_only');
+
+    if (readable.length === 0 && activeBooks.length > 0) {
+        results.push(warn('All active lorebooks are write-only — Search tool will have nothing to search. Consider setting at least one lorebook to Read+Write or Read-Only.'));
+    }
+    if (writable.length === 0 && activeBooks.length > 0) {
+        results.push(warn('All active lorebooks are read-only — Remember/Update/Forget tools cannot write anywhere. Consider setting at least one lorebook to Read+Write or Write-Only.'));
+    }
+
+    if (readOnly.length > 0 || writeOnly.length > 0) {
+        const parts = [];
+        if (readOnly.length > 0) parts.push(`${readOnly.length} read-only`);
+        if (writeOnly.length > 0) parts.push(`${writeOnly.length} write-only`);
+        results.push(pass(`Book permissions: ${parts.join(', ')} (${readable.length} readable, ${writable.length} writable)`));
+    }
+
+    return results;
+}
+
+function checkSidecarAutoRetrieval() {
+    const settings = getSettings();
+    if (!settings.sidecarAutoRetrieval) {
+        return pass('Sidecar auto-retrieval: disabled');
+    }
+
+    if (!settings.connectionProfile) {
+        return warn('Sidecar auto-retrieval is enabled but no connection profile is selected. Auto-retrieval requires a sidecar connection profile.');
+    }
+
+    const maxTokens = settings.sidecarMaxInjectionTokens ?? 4000;
+    if (maxTokens > 12000) {
+        return warn(`Sidecar auto-retrieval max injection is ${maxTokens} tokens — this is very large and may consume significant context. Consider reducing to 4000-8000.`);
+    }
+
+    return pass(`Sidecar auto-retrieval: enabled (${settings.sidecarContextMessages ?? 10} messages context, ${maxTokens} token cap)`);
+}
+
+function checkSidecarPostGenWriter() {
+    const settings = getSettings();
+    if (!settings.sidecarPostGenWriter) {
+        return pass('Sidecar post-gen writer: disabled');
+    }
+
+    if (!settings.connectionProfile) {
+        return warn('Sidecar post-gen writer is enabled but no connection profile is selected. The writer requires a sidecar connection profile.');
+    }
+
+    const maxOps = settings.sidecarWriterMaxOps ?? 5;
+    if (maxOps > 8) {
+        return warn(`Sidecar post-gen writer max operations is ${maxOps} — this is high and may cause many lorebook writes per turn. Consider reducing to 3-5.`);
+    }
+
+    return pass(`Sidecar post-gen writer: enabled (${settings.sidecarWriterContextMessages ?? 15} messages context, max ${maxOps} ops/turn)`);
 }
 
 /** Remove UIDs from tree that aren't in the valid set. */

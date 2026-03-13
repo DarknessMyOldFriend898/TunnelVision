@@ -13,6 +13,7 @@ import { mergeEntries, splitEntry, findEntry } from '../entry-manager.js';
 import { getActiveTunnelVisionBooks, resolveTargetBook, getBookListWithDescriptions } from '../tool-registry.js';
 
 export const TOOL_NAME = 'TunnelVision_MergeSplit';
+export const COMPACT_DESCRIPTION = 'Merge two overlapping entries into one, or split a bloated entry into focused pieces.';
 
 /**
  * Returns the tool definition for ToolManager.registerFunctionTool().
@@ -96,7 +97,7 @@ ${bookDesc}`,
                 return 'Missing required field: action is required.';
             }
 
-            const { book: lorebook, error } = resolveTargetBook(args.lorebook);
+            const { book: lorebook, error } = resolveTargetBook(args.lorebook, { checkWrite: true });
             if (error) return error;
 
             switch (args.action) {

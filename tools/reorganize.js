@@ -10,6 +10,7 @@ import { moveEntry, createCategory, listNodeEntries } from '../entry-manager.js'
 import { getActiveTunnelVisionBooks, resolveTargetBook, getBookListWithDescriptions } from '../tool-registry.js';
 
 export const TOOL_NAME = 'TunnelVision_Reorganize';
+export const COMPACT_DESCRIPTION = 'Move entries between tree categories or create new categories for better organization.';
 
 /**
  * Returns the tool definition for ToolManager.registerFunctionTool().
@@ -67,7 +68,7 @@ ${bookDesc}`,
                 return 'Missing required field: action is required.';
             }
 
-            const { book: lorebook, error } = resolveTargetBook(args.lorebook);
+            const { book: lorebook, error } = resolveTargetBook(args.lorebook, { checkWrite: true });
             if (error) return error;
 
             switch (args.action) {

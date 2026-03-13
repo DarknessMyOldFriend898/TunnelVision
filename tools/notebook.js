@@ -18,6 +18,7 @@ import { getSettings } from '../tree-store.js';
 import { getActiveTunnelVisionBooks } from '../tool-registry.js';
 
 export const TOOL_NAME = 'TunnelVision_Notebook';
+export const COMPACT_DESCRIPTION = 'Read or write to the character notebook for freeform notes and planning.';
 
 const METADATA_KEY = 'tunnelvision_notebook';
 const MAX_NOTES = 50;

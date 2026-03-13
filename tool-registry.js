@@ -10,16 +10,16 @@ import { selected_world_info, world_info, loadWorldInfo, METADATA_KEY } from '..
 import { characters, this_chid, chat_metadata } from '../../../../script.js';
 import { getCharaFilename } from '../../../utils.js';
 import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
-import { isLorebookEnabled, getSettings, getTree, getBookDescription, syncTrackerUidsForLorebook } from './tree-store.js';
+import { isLorebookEnabled, getSettings, getTree, getBookDescription, syncTrackerUidsForLorebook, canReadBook, canWriteBook } from './tree-store.js';
 
-import { getDefinition as getSearchDef, getTreeOverview, TOOL_NAME as SEARCH_NAME } from './tools/search.js';
-import { getDefinition as getRememberDef, TOOL_NAME as REMEMBER_NAME } from './tools/remember.js';
-import { getDefinition as getUpdateDef, TOOL_NAME as UPDATE_NAME } from './tools/update.js';
-import { getDefinition as getForgetDef, TOOL_NAME as FORGET_NAME } from './tools/forget.js';
-import { getDefinition as getReorganizeDef, TOOL_NAME as REORGANIZE_NAME } from './tools/reorganize.js';
-import { getDefinition as getSummarizeDef, TOOL_NAME as SUMMARIZE_NAME } from './tools/summarize.js';
-import { getDefinition as getMergeSplitDef, TOOL_NAME as MERGESPLIT_NAME } from './tools/merge-split.js';
-import { getDefinition as getNotebookDef, TOOL_NAME as NOTEBOOK_NAME } from './tools/notebook.js';
+import { getDefinition as getSearchDef, getTreeOverview, TOOL_NAME as SEARCH_NAME, COMPACT_DESCRIPTION as SEARCH_COMPACT } from './tools/search.js';
+import { getDefinition as getRememberDef, TOOL_NAME as REMEMBER_NAME, COMPACT_DESCRIPTION as REMEMBER_COMPACT } from './tools/remember.js';
+import { getDefinition as getUpdateDef, TOOL_NAME as UPDATE_NAME, COMPACT_DESCRIPTION as UPDATE_COMPACT } from './tools/update.js';
+import { getDefinition as getForgetDef, TOOL_NAME as FORGET_NAME, COMPACT_DESCRIPTION as FORGET_COMPACT } from './tools/forget.js';
+import { getDefinition as getReorganizeDef, TOOL_NAME as REORGANIZE_NAME, COMPACT_DESCRIPTION as REORGANIZE_COMPACT } from './tools/reorganize.js';
+import { getDefinition as getSummarizeDef, TOOL_NAME as SUMMARIZE_NAME, COMPACT_DESCRIPTION as SUMMARIZE_COMPACT } from './tools/summarize.js';
+import { getDefinition as getMergeSplitDef, TOOL_NAME as MERGESPLIT_NAME, COMPACT_DESCRIPTION as MERGESPLIT_COMPACT } from './tools/merge-split.js';
+import { getDefinition as getNotebookDef, TOOL_NAME as NOTEBOOK_NAME, COMPACT_DESCRIPTION as NOTEBOOK_COMPACT } from './tools/notebook.js';
 
 /** All tool names for bulk unregister. */
 const ALL_TOOL_NAMES = [SEARCH_NAME, REMEMBER_NAME, UPDATE_NAME, FORGET_NAME, REORGANIZE_NAME, SUMMARIZE_NAME, MERGESPLIT_NAME, NOTEBOOK_NAME];
@@ -50,6 +50,21 @@ export function stripDynamicContent(text) {
 
 /** Tools that can be gated with per-tool confirmation. Only destructive/mutating tools. */
 const CONFIRMABLE_TOOLS = new Set([REMEMBER_NAME, UPDATE_NAME, FORGET_NAME, SUMMARIZE_NAME, REORGANIZE_NAME, MERGESPLIT_NAME]);
+
+/** Map from tool name to compact one-liner description. */
+const COMPACT_DESCRIPTIONS = {
+    [SEARCH_NAME]: SEARCH_COMPACT,
+    [REMEMBER_NAME]: REMEMBER_COMPACT,
+    [UPDATE_NAME]: UPDATE_COMPACT,
+    [FORGET_NAME]: FORGET_COMPACT,
+    [REORGANIZE_NAME]: REORGANIZE_COMPACT,
+    [SUMMARIZE_NAME]: SUMMARIZE_COMPACT,
+    [MERGESPLIT_NAME]: MERGESPLIT_COMPACT,
+    [NOTEBOOK_NAME]: NOTEBOOK_COMPACT,
+};
+
+/** Guide tool name — registered in compact mode to provide full tool details on demand. */
+const GUIDE_NAME = 'TunnelVision_Guide';
 
 /** Cached tracker list string — refreshed on each registerTools() call. */
 let _trackerListCache = '';
@@ -257,21 +272,29 @@ export async function preflightToolRuntimeState({ repair = true, reason = 'gener
 
 /**
  * Resolve which lorebook to write to. Auto-corrects when only one book is active.
+ * Enforces write permissions when checkWrite=true.
  * @param {string|undefined} requestedBook - The lorebook name the AI provided.
+ * @param {{ checkWrite?: boolean }} [opts]
  * @returns {{ book: string, error: string|null }} The resolved book name, or an error message.
  */
-export function resolveTargetBook(requestedBook) {
+export function resolveTargetBook(requestedBook, { checkWrite = false } = {}) {
     const activeBooks = getActiveTunnelVisionBooks();
     if (activeBooks.length === 0) {
         return { book: '', error: 'No active TunnelVision lorebooks.' };
     }
 
-    // Single book: always use it, regardless of what the AI typed
-    if (activeBooks.length === 1) {
-        return { book: activeBooks[0], error: null };
+    // Filter to writable books if checking permissions
+    const candidateBooks = checkWrite ? activeBooks.filter(canWriteBook) : activeBooks;
+    if (checkWrite && candidateBooks.length === 0) {
+        return { book: '', error: 'No writable lorebooks. All active lorebooks are set to read-only.' };
     }
 
-    // Multiple books: validate the AI's choice
+    // Single candidate: always use it, regardless of what the AI typed
+    if (candidateBooks.length === 1) {
+        return { book: candidateBooks[0], error: null };
+    }
+
+    // Multiple candidates: validate the AI's choice
     if (!requestedBook) {
         const desc = getBookListWithDescriptions();
         return { book: '', error: `Multiple lorebooks active. You must specify which one.\n${desc}` };
@@ -280,7 +303,19 @@ export function resolveTargetBook(requestedBook) {
         const desc = getBookListWithDescriptions();
         return { book: '', error: `Lorebook "${requestedBook}" is not active.\n${desc}` };
     }
+    if (checkWrite && !canWriteBook(requestedBook)) {
+        return { book: '', error: `Lorebook "${requestedBook}" is read-only. Write operations are not allowed.` };
+    }
     return { book: requestedBook, error: null };
+}
+
+/**
+ * Get active lorebooks that allow read (Search) operations.
+ * Filters out write-only lorebooks.
+ * @returns {string[]}
+ */
+export function getReadableBooks() {
+    return getActiveTunnelVisionBooks().filter(canReadBook);
 }
 
 /**
@@ -395,6 +430,43 @@ function wrapWithConfirmation(originalAction, displayName) {
 }
 
 /**
+ * Build the guide tool description listing all enabled tools with usage guidance.
+ * @param {Array} allDefs - All tool definitions
+ * @param {Object} disabled - Disabled tools map
+ * @returns {string}
+ */
+function buildGuideDescription(allDefs, disabled) {
+    const bookDesc = getBookListWithDescriptions();
+    const enabledTools = allDefs.filter(({ name, def }) => def && !disabled[name]);
+
+    let desc = `TunnelVision manages long-term memory in lorebooks. Call this tool with a tool name to get detailed usage instructions.\n\nAvailable lorebooks:\n${bookDesc}\n\nAvailable tools:\n`;
+
+    for (const { def, name } of enabledTools) {
+        const compact = COMPACT_DESCRIPTIONS[name] || def.description.split('\n')[0];
+        desc += `- ${name}: ${compact}\n`;
+    }
+
+    desc += `\nUsage guidelines:
+- ALWAYS Search before Remember to avoid duplicates
+- Prefer Update over Remember when information already exists
+- Use Merge to consolidate overlapping entries
+- Use Forget only when information is definitively wrong or irrelevant
+- Use Summarize for significant scenes and narrative beats
+- Keep entries broad — combine related facts rather than creating many small entries`;
+
+    // Add dynamic content (tree overview, tracker list) to the guide
+    const treeOverview = getTreeOverview();
+    if (treeOverview) {
+        desc += DYNAMIC_DELIMITER + treeOverview;
+    }
+    if (_trackerListCache) {
+        desc += _trackerListCache;
+    }
+
+    return desc;
+}
+
+/**
  * Register all TunnelVision tools with ToolManager.
  * Each tool's getDefinition() may return null if preconditions aren't met
  * (e.g. Search returns null if no valid trees exist).
@@ -418,6 +490,7 @@ export async function registerTools() {
 
     const confirmTools = settings.confirmTools || {};
     const promptOverrides = settings.toolPromptOverrides || {};
+    const compact = settings.compactToolPrompts === true;
 
     let registered = 0;
     for (const { def, name } of allDefs) {
@@ -429,22 +502,28 @@ export async function registerTools() {
         // Clone def to avoid mutating the original
         let registrationDef = { ...def };
 
-        // Apply user prompt override (description only), stripping any stale dynamic content
+        // Apply user prompt override (always wins, regardless of compact mode)
         if (promptOverrides[name] && typeof promptOverrides[name] === 'string') {
             registrationDef.description = stripDynamicContent(promptOverrides[name]);
+        } else if (compact && COMPACT_DESCRIPTIONS[name]) {
+            // Compact mode: use one-liner description
+            registrationDef.description = COMPACT_DESCRIPTIONS[name];
         }
 
         // Build dynamic suffix (tree overview + tracker list) — injected after delimiter
-        let dynamicSuffix = '';
-        if (name === SEARCH_NAME) {
-            const treeOverview = getTreeOverview();
-            if (treeOverview) dynamicSuffix += treeOverview;
-        }
-        if (_trackerListCache && (name === SEARCH_NAME || name === UPDATE_NAME)) {
-            dynamicSuffix += _trackerListCache;
-        }
-        if (dynamicSuffix) {
-            registrationDef.description = registrationDef.description + DYNAMIC_DELIMITER + dynamicSuffix;
+        // In compact mode, dynamic content goes on the guide tool instead
+        if (!compact) {
+            let dynamicSuffix = '';
+            if (name === SEARCH_NAME) {
+                const treeOverview = getTreeOverview();
+                if (treeOverview) dynamicSuffix += treeOverview;
+            }
+            if (_trackerListCache && (name === SEARCH_NAME || name === UPDATE_NAME)) {
+                dynamicSuffix += _trackerListCache;
+            }
+            if (dynamicSuffix) {
+                registrationDef.description = registrationDef.description + DYNAMIC_DELIMITER + dynamicSuffix;
+            }
         }
 
         // Wrap action with confirmation gate for confirmable tools
@@ -460,9 +539,49 @@ export async function registerTools() {
         }
     }
 
+    // Register guide tool in compact mode
+    if (compact && registered > 0) {
+        try {
+            const guideDesc = buildGuideDescription(allDefs, disabled);
+            ToolManager.registerFunctionTool({
+                name: GUIDE_NAME,
+                displayName: 'TunnelVision Guide',
+                description: guideDesc,
+                parameters: {
+                    $schema: 'http://json-schema.org/draft-04/schema#',
+                    type: 'object',
+                    properties: {
+                        tool: {
+                            type: 'string',
+                            description: 'Optional: name of a specific tool to get detailed instructions for.',
+                        },
+                    },
+                    required: [],
+                },
+                action: async (args) => {
+                    // Return full descriptions on demand
+                    if (args?.tool) {
+                        const match = allDefs.find(({ name }) => name === args.tool || name.toLowerCase().includes(String(args.tool).toLowerCase()));
+                        if (match?.def) {
+                            return `Full instructions for ${match.name}:\n\n${match.def.description}`;
+                        }
+                        return `Tool "${args.tool}" not found. Available: ${allDefs.filter(({ name }) => !disabled[name]).map(({ name }) => name).join(', ')}`;
+                    }
+                    return guideDesc;
+                },
+                formatMessage: async () => 'Checking TunnelVision tool guide...',
+                shouldRegister: async () => true,
+                stealth: false,
+            });
+            registered++;
+        } catch (e) {
+            console.error('[TunnelVision] Failed to register guide tool:', e);
+        }
+    }
+
     const eligible = allDefs.filter(({ def, name }) => def && !disabled[name]).length;
     const snapshot = await inspectToolRuntimeState();
-    console.log(`[TunnelVision] Registered ${registered}/${eligible} tools for ${activeBooks.length} lorebook(s)`);
+    console.log(`[TunnelVision] Registered ${registered}/${eligible} tools for ${activeBooks.length} lorebook(s)${compact ? ' (compact mode)' : ''}`);
     logToolRuntimeSnapshot({ ...snapshot, repairApplied: false, failureReasons: [] }, 'register');
 }
 
@@ -477,6 +596,7 @@ export function unregisterTools() {
             // Tool may not be registered — that's fine
         }
     }
+    try { ToolManager.unregisterFunctionTool(GUIDE_NAME); } catch { /* not registered */ }
 }
 
 // Re-export tool names and constants for diagnostics/UI

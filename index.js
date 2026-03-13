@@ -29,9 +29,15 @@ import { bindUIEvents, refreshUI } from './ui-controller.js';
 import { initActivityFeed } from './activity-feed.js';
 import { initCommands } from './commands.js';
 import { initAutoSummary } from './auto-summary.js';
+import { runSidecarRetrieval } from './sidecar-retrieval.js';
+import { runSidecarWriter } from './sidecar-writer.js';
 
 const EXTENSION_NAME = 'tunnelvision';
 const EXTENSION_FOLDER = `third-party/TunnelVision`;
+
+// Guard: prevents tool re-registration when WORLDINFO_UPDATED fires during generation
+// (lorebook saves from tool actions trigger this event mid-generation).
+let _generationInProgress = false;
 
 async function init() {
     // Ensure settings exist
@@ -90,6 +96,37 @@ async function init() {
         eventSource.on(event_types.GENERATION_STARTED, onGenerationStarted);
     }
 
+    // Clear generation guard when generation ends (covers abort/stop paths).
+    // MESSAGE_RECEIVED already clears it for the normal completion path.
+    if (event_types.GENERATION_ENDED) {
+        eventSource.on(event_types.GENERATION_ENDED, () => { _generationInProgress = false; window.TunnelVision_isRecursiveToolPass = false; });
+    } else {
+        if (event_types.GENERATION_STOPPED) {
+            eventSource.on(event_types.GENERATION_STOPPED, () => { _generationInProgress = false; window.TunnelVision_isRecursiveToolPass = false; });
+        }
+    }
+
+    // Post-generation sidecar writer (remember/update after model responds)
+    if (event_types.MESSAGE_RECEIVED) {
+        eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
+    }
+
+    // Clean up orphaned tool invocations when messages are deleted
+    if (event_types.MESSAGE_DELETED) {
+        eventSource.on(event_types.MESSAGE_DELETED, cleanOrphanedToolInvocations);
+    }
+
+    // Refresh connection profile dropdown when profiles change
+    if (event_types.CONNECTION_PROFILE_CREATED) {
+        eventSource.on(event_types.CONNECTION_PROFILE_CREATED, () => refreshUI());
+    }
+    if (event_types.CONNECTION_PROFILE_DELETED) {
+        eventSource.on(event_types.CONNECTION_PROFILE_DELETED, () => refreshUI());
+    }
+    if (event_types.CONNECTION_PROFILE_UPDATED) {
+        eventSource.on(event_types.CONNECTION_PROFILE_UPDATED, () => refreshUI());
+    }
+
     console.log('[TunnelVision] Extension loaded');
 }
 
@@ -100,6 +137,10 @@ async function onChatChanged() {
 
 async function onWorldInfoUpdated() {
     refreshUI();
+    if (_generationInProgress) {
+        console.debug('[TunnelVision] Skipping tool re-registration during active generation');
+        return;
+    }
     await registerTools();
 }
 
@@ -216,12 +257,72 @@ function stripOldToolResults() {
 }
 
 /**
+ * Remove orphaned tool_invocations system messages from the tail of the chat.
+ * After a regenerate or delete, the chat may end with one or more tool_invocations
+ * system messages whose parent assistant reply no longer exists. These orphans cause
+ * the API to receive tool_result blocks without matching tool_use blocks, producing
+ * errors like "unexpected tool_use_id" (Anthropic) or "function call turn" (OpenAI).
+ *
+ * Walks backward from the end of chat and removes any trailing is_system messages
+ * that carry tool_invocations. Stops as soon as it hits a non-tool-invocation message.
+ */
+function cleanOrphanedToolInvocations() {
+    const context = getContext();
+    const chat = context.chat;
+    if (!chat || chat.length < 2) return;
+
+    let removed = 0;
+    while (chat.length > 1) {
+        const last = chat[chat.length - 1];
+        if (!last.is_system || !Array.isArray(last.extra?.tool_invocations)) break;
+
+        // This is an orphaned tool_invocations message at the tail -- remove it
+        chat.length = chat.length - 1;
+        removed++;
+    }
+
+    if (removed > 0) {
+        console.log(`[TunnelVision] Removed ${removed} orphaned tool_invocations message(s) from chat tail`);
+    }
+}
+
+/**
  * Inject or clear the mandatory tool call system prompt before each generation.
  * Runs before ST assembles the next request, so it can validate TV tool state first.
  */
-async function onGenerationStarted(type, opts) {
+async function onGenerationStarted(type, opts, dryRun) {
+    _generationInProgress = true;
+
+    // Skip dry runs (ST's token counting passes) — no sidecar calls or heavy work needed.
+    if (dryRun) return;
+
+    // Detect recursive tool-call passes FIRST, before any other work.
+    // On recursive passes the last message is a tool_invocations system message
+    // containing the tool results the model needs. We must NOT touch it.
+    const context = getContext();
+    const lastMsg = context.chat?.[context.chat.length - 1];
+    const isRecursiveToolPass = lastMsg?.extra?.tool_invocations != null;
+
+    // Expose recursive state globally so presets, macros, and other extensions can
+    // skip work during recursive tool passes.
+    window.TunnelVision_isRecursiveToolPass = isRecursiveToolPass;
+
+    // On recursive passes, clear the mandatory tool prompt so the model isn't
+    // told "you MUST call a tool" when it already has tool results and should
+    // be writing the actual response. Then skip all other heavy work.
+    if (isRecursiveToolPass) {
+        setExtensionPrompt(TV_PROMPT_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+        return;
+    }
+
     const settings = getSettings();
     let runtimeState = null;
+
+    // Clean up orphaned tool_invocations at the tail of chat (caused by
+    // regenerate or message deletion leaving tool result messages without
+    // a matching assistant reply). Only on first pass — on recursive passes
+    // the tail message IS the active tool result, not an orphan.
+    cleanOrphanedToolInvocations();
 
     if (settings.globalEnabled !== false) {
         runtimeState = await preflightToolRuntimeState({ repair: true, reason: 'generation', log: true });
@@ -232,21 +333,26 @@ async function onGenerationStarted(type, opts) {
         stripOldToolResults();
     }
 
-    // Detect recursive tool-call passes: if the last chat message is a tool invocation,
-    // ST is re-running Generate() after processing tool results. Skip mandatory injection
-    // to prevent infinite tool-call loops (the model sees "you MUST call a tool" every pass).
-    const context = getContext();
-    const lastMsg = context.chat?.[context.chat.length - 1];
-    const isRecursiveToolPass = lastMsg?.extra?.tool_invocations != null;
+    // Sidecar auto-retrieval: pre-fetch relevant entries before generation (first pass only)
+    if (settings.sidecarAutoRetrieval && settings.globalEnabled !== false) {
+        try {
+            await runSidecarRetrieval();
+        } catch (err) {
+            console.error('[TunnelVision] Sidecar auto-retrieval error:', err);
+        }
+    }
 
     // Mandatory tool call instruction (only on first pass, not recursive)
     const mandatoryPosition = mapPositionSetting(settings.mandatoryPromptPosition);
     const mandatoryDepth = settings.mandatoryPromptDepth ?? 1;
-    const mandatoryRole = mapRoleSetting(settings.mandatoryPromptRole);
+    // Guard: in_chat + user role can bisect tool_use/tool_result pairs on Claude,
+    // causing "unexpected tool_use_id" API errors. Force system role in that case.
+    const mandatoryRoleSetting = (settings.mandatoryPromptPosition === 'in_chat' && settings.mandatoryPromptRole === 'user')
+        ? 'system' : settings.mandatoryPromptRole;
+    const mandatoryRole = mapRoleSetting(mandatoryRoleSetting);
 
     if (
-        !isRecursiveToolPass
-        && settings.globalEnabled !== false
+        settings.globalEnabled !== false
         && settings.mandatoryTools
         && runtimeState?.activeBooks?.length > 0
         && runtimeState.expectedToolNames.length > 0
@@ -257,8 +363,7 @@ async function onGenerationStarted(type, opts) {
     } else {
         setExtensionPrompt(TV_PROMPT_KEY, '', mandatoryPosition, mandatoryDepth, false, mandatoryRole);
         if (
-            !isRecursiveToolPass
-            && settings.globalEnabled !== false
+            settings.globalEnabled !== false
             && settings.mandatoryTools
             && runtimeState
             && runtimeState.activeBooks.length > 0
@@ -272,13 +377,35 @@ async function onGenerationStarted(type, opts) {
     // Inject notebook contents every turn (if enabled and notes exist)
     const notebookPosition = mapPositionSetting(settings.notebookPromptPosition);
     const notebookDepth = settings.notebookPromptDepth ?? 1;
-    const notebookRole = mapRoleSetting(settings.notebookPromptRole);
+    const notebookRoleSetting = (settings.notebookPromptPosition === 'in_chat' && settings.notebookPromptRole === 'user')
+        ? 'system' : settings.notebookPromptRole;
+    const notebookRole = mapRoleSetting(notebookRoleSetting);
 
     if (settings.globalEnabled !== false && settings.notebookEnabled !== false) {
         const notebookPrompt = buildNotebookPrompt();
         setExtensionPrompt(TV_NOTEBOOK_KEY, notebookPrompt, notebookPosition, notebookDepth, false, notebookRole);
     } else {
         setExtensionPrompt(TV_NOTEBOOK_KEY, '', notebookPosition, notebookDepth, false, notebookRole);
+    }
+}
+
+/**
+ * Post-generation handler: run sidecar writer if enabled.
+ * Fires after the chat model's response is received (MESSAGE_RECEIVED).
+ */
+async function onMessageReceived() {
+    // Clear generation guards BEFORE the sidecar writer runs, so that lorebook
+    // writes triggered by the writer do not get blocked by the generation guard.
+    _generationInProgress = false;
+    window.TunnelVision_isRecursiveToolPass = false;
+
+    const settings = getSettings();
+    if (!settings.sidecarPostGenWriter || settings.globalEnabled === false) return;
+
+    try {
+        await runSidecarWriter();
+    } catch (err) {
+        console.error('[TunnelVision] Sidecar post-gen writer error:', err);
     }
 }
 

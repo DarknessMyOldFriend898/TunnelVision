@@ -10,6 +10,7 @@ import { updateEntry } from '../entry-manager.js';
 import { getActiveTunnelVisionBooks, resolveTargetBook, getBookListWithDescriptions } from '../tool-registry.js';
 
 export const TOOL_NAME = 'TunnelVision_Update';
+export const COMPACT_DESCRIPTION = 'Modify an existing lorebook entry — update content, title, or keys when stored information changes.';
 
 /**
  * Returns the tool definition for ToolManager.registerFunctionTool().
@@ -62,7 +63,7 @@ ${bookDesc}`,
                 return 'Missing required field: uid is required.';
             }
 
-            const { book: lorebook, error } = resolveTargetBook(args.lorebook);
+            const { book: lorebook, error } = resolveTargetBook(args.lorebook, { checkWrite: true });
             if (error) return error;
 
             // Must provide at least one thing to update
