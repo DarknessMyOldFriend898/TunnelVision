@@ -31,7 +31,6 @@ By default, entries are disabled (soft-deleted) and can be re-enabled by the use
 Available lorebooks:
 ${bookDesc}`,
         parameters: {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
             properties: {
                 lorebook: {

@@ -166,7 +166,6 @@ Provide messages_back to indicate roughly how many messages this summary covers 
 
 When you notice related events forming a pattern or storyline, group them into "arcs" (narrative threads). Proactively create a new arc with create_arc when a new story thread emerges, and assign subsequent related summaries to it with arc_node_id. You can also use TunnelVision_Reorganize to move earlier summaries into an arc retroactively.`,
         parameters: {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
             properties: {
                 lorebook: {

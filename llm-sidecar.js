@@ -62,8 +62,16 @@ function getProviderInfo(apiSource) {
  * @returns {Promise<string|null>} The API key or null if unavailable
  */
 export async function fetchSecretKey(secretKey) {
-    if (!secretKey) return null;
-    if (_secretKeyFailed) return null;
+    if (!secretKey) {
+        console.warn(`[${MODULE_NAME}] fetchSecretKey called with no key identifier — provider may not be in PROVIDER_MAP`);
+        return null;
+    }
+    if (_secretKeyFailed) {
+        console.debug(`[${MODULE_NAME}] fetchSecretKey("${secretKey}"): skipped (circuit breaker tripped from prior 403)`);
+        return null;
+    }
+
+    console.debug(`[${MODULE_NAME}] Fetching secret key: "${secretKey}" from /api/secrets/find...`);
 
     try {
         const response = await fetch('/api/secrets/find', {
@@ -75,15 +83,19 @@ export async function fetchSecretKey(secretKey) {
         if (!response.ok) {
             if (response.status === 403) {
                 _secretKeyFailed = true;
-                console.warn(`[${MODULE_NAME}] Secret key access denied (403). Sidecar features disabled for this session. Enable allowKeysExposure in config.yaml to use sidecar.`);
+                console.warn(`[${MODULE_NAME}] Secret key access DENIED (403). allowKeysExposure is NOT enabled in config.yaml. Sidecar disabled for this session.`);
+            } else {
+                console.warn(`[${MODULE_NAME}] Secret key fetch failed: HTTP ${response.status} for "${secretKey}"`);
             }
             return null;
         }
 
         const data = await response.json();
+        const hasValue = !!(data.value);
+        console.debug(`[${MODULE_NAME}] Secret key "${secretKey}": ${hasValue ? 'FOUND (key retrieved)' : 'EMPTY (key not set in ST)'}`);
         return data.value || null;
     } catch (error) {
-        console.error(`[${MODULE_NAME}] Error fetching secret key:`, error);
+        console.error(`[${MODULE_NAME}] Error fetching secret key "${secretKey}":`, error);
         return null;
     }
 }
@@ -108,12 +120,24 @@ const THINK_BLOCK_RE = /<think[\s\S]*?<\/think>/gi;
  * @returns {boolean}
  */
 export function isSidecarConfigured() {
-    if (_secretKeyFailed) return false;
+    if (_secretKeyFailed) {
+        console.debug(`[${MODULE_NAME}] Sidecar check: DISABLED (secret key 403 circuit breaker tripped)`);
+        return false;
+    }
     const settings = getSettings();
     const profileId = settings.connectionProfile;
-    if (!profileId) return false;
+    if (!profileId) {
+        console.debug(`[${MODULE_NAME}] Sidecar check: NO PROFILE selected in settings`);
+        return false;
+    }
     const profile = findConnectionProfile(profileId);
-    return !!(profile?.api && profile?.model);
+    if (!profile) {
+        console.debug(`[${MODULE_NAME}] Sidecar check: profile ID "${profileId}" NOT FOUND in Connection Manager`);
+        return false;
+    }
+    const configured = !!(profile.api && profile.model);
+    console.debug(`[${MODULE_NAME}] Sidecar check: profile="${profile.name || profileId}" api="${profile.api || 'MISSING'}" model="${profile.model || 'MISSING'}" → ${configured ? 'CONFIGURED' : 'INCOMPLETE'}`);
+    return configured;
 }
 
 /**
@@ -140,6 +164,7 @@ function resolveProfileConfig() {
     if (!profile?.api || !profile?.model) return null;
 
     const info = getProviderInfo(profile.api);
+    const isKnownProvider = !!PROVIDER_MAP[profile.api];
 
     // For known providers (those in PROVIDER_MAP with a default endpoint), always use
     // the PROVIDER_MAP endpoint for direct calls. ST stores session-based proxy URLs
@@ -150,6 +175,17 @@ function resolveProfileConfig() {
     if (!info.endpoint && endpoint && info.format === 'openai' && !endpoint.endsWith('/chat/completions')) {
         endpoint = endpoint.replace(/\/+$/, '') + '/chat/completions';
     }
+
+    console.debug(`[${MODULE_NAME}] Resolved sidecar config:`, {
+        profileName: profile.name || profileId,
+        provider: profile.api,
+        knownProvider: isKnownProvider,
+        format: info.format,
+        model: profile.model,
+        endpoint: endpoint || 'NONE',
+        secretKeyId: info.secretKey || 'NONE',
+        profileUrl: profile['api-url'] || 'not set',
+    });
 
     return {
         provider: profile.api,
@@ -171,6 +207,8 @@ function resolveProfileConfig() {
  * @throws {Error} On missing config, missing API key, or API errors
  */
 export async function sidecarGenerate({ prompt, systemPrompt }) {
+    console.debug(`[${MODULE_NAME}] sidecarGenerate called (prompt length: ${prompt?.length || 0})`);
+
     const config = resolveProfileConfig();
     if (!config) {
         throw new Error('Sidecar not configured: no valid connection profile selected.');
@@ -194,6 +232,8 @@ export async function sidecarGenerate({ prompt, systemPrompt }) {
         );
     }
 
+    console.debug(`[${MODULE_NAME}] Sidecar calling ${format} API: ${provider}/${model} → ${endpoint} (temp=${temperature}, maxTokens=${maxTokens})`);
+
     let result;
 
     if (format === 'anthropic') {
@@ -205,7 +245,9 @@ export async function sidecarGenerate({ prompt, systemPrompt }) {
     }
 
     // Strip thinking/reasoning blocks
-    return typeof result === 'string' ? result.replace(THINK_BLOCK_RE, '').trim() : result;
+    const cleaned = typeof result === 'string' ? result.replace(THINK_BLOCK_RE, '').trim() : result;
+    console.debug(`[${MODULE_NAME}] Sidecar response received: ${typeof cleaned === 'string' ? cleaned.length : 0} chars from ${provider}/${model}`);
+    return cleaned;
 }
 
 // ─── Provider-Specific Callers ──────────────────────────────────────

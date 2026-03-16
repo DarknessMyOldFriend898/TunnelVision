@@ -32,7 +32,6 @@ Actions:
 Available lorebooks:
 ${bookDesc}`,
         parameters: {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
             properties: {
                 lorebook: {

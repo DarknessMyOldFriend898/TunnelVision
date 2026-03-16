@@ -67,8 +67,10 @@ const THINK_BLOCK_RE = /<think[\s\S]*?<\/think>/gi;
  */
 async function generateRaw(opts) {
     if (isSidecarConfigured()) {
+        console.debug('[TunnelVision] tree-builder: using SIDECAR for LLM call');
         return sidecarGenerate(opts);
     }
+    console.debug('[TunnelVision] tree-builder: using ST generateRaw FALLBACK (no sidecar configured)');
     const result = await _generateRaw(opts);
     return typeof result === 'string' ? result.replace(THINK_BLOCK_RE, '').trim() : result;
 }

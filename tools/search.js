@@ -474,6 +474,27 @@ function findNodeAcrossBooks(nodeId) {
     return null;
 }
 
+/**
+ * Collect a sample of node IDs from active trees for error recovery hints.
+ * Used when the model calls the tool with empty args (proxy truncated the description).
+ * @param {number} max Maximum number of IDs to return
+ * @returns {string[]}
+ */
+function _collectSampleNodeIds(max = 8) {
+    const ids = [];
+    for (const bookName of getReadableBooks()) {
+        const tree = getTree(bookName);
+        if (!tree?.root) continue;
+        const queue = [...(tree.root.children || [])];
+        while (queue.length > 0 && ids.length < max) {
+            const node = queue.shift();
+            if (node.id) ids.push(node.id);
+            if (node.children) queue.push(...node.children);
+        }
+    }
+    return ids;
+}
+
 // ─── Tool Definition ─────────────────────────────────────────────
 
 /**
@@ -583,10 +604,13 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
         : {};
 
     // Collapsed mode: node_ids accepts multiple IDs in one call
+    // NOTE: $schema is intentionally omitted — it's non-standard for OpenAI function calling
+    // and causes some proxies (e.g. Electron Hub, OpenRouter) to silently strip or mangle
+    // the tool call arguments, resulting in empty args `{}`.
     const parameters = isCollapsed
         ? {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
+            required: ['node_ids'],
             properties: {
                 node_ids: {
                     type: 'array',
@@ -610,8 +634,8 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
             },
         }
         : {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
+            required: ['node_id'],
             properties: {
                 node_id: {
                     type: 'string',
@@ -698,7 +722,13 @@ async function handleCollapsedSearch(args, selective = false) {
     }
 
     if (nodeIds.length === 0) {
-        return 'No node_id or node_ids provided. Select one or more node IDs from the tree above.';
+        // Include available node IDs in the error so the model can recover even if
+        // the tool description was truncated by a proxy (e.g. Electron Hub)
+        const sampleIds = _collectSampleNodeIds(8);
+        const idHint = sampleIds.length > 0
+            ? ` Available node IDs include: ${sampleIds.join(', ')}. Use action "search" with a "query" for keyword search.`
+            : '';
+        return `No node_id or node_ids provided.${idHint}`;
     }
 
     const action = args.action || 'retrieve';
@@ -774,7 +804,11 @@ async function handleCollapsedSearch(args, selective = false) {
  */
 async function handleTraversalSearch(args, selective = false) {
     if (!args?.node_id) {
-        return 'No node_id provided. Select a node from the tree above.';
+        const sampleIds = _collectSampleNodeIds(6);
+        const idHint = sampleIds.length > 0
+            ? ` Available node IDs include: ${sampleIds.join(', ')}.`
+            : '';
+        return `No node_id provided.${idHint}`;
     }
 
     const found = findNodeAcrossBooks(args.node_id);

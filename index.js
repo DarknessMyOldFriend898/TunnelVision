@@ -99,10 +99,18 @@ async function init() {
     // Clear generation guard when generation ends (covers abort/stop paths).
     // MESSAGE_RECEIVED already clears it for the normal completion path.
     if (event_types.GENERATION_ENDED) {
-        eventSource.on(event_types.GENERATION_ENDED, () => { _generationInProgress = false; window.TunnelVision_isRecursiveToolPass = false; });
+        eventSource.on(event_types.GENERATION_ENDED, () => {
+            console.debug('[TunnelVision] GENERATION_ENDED — clearing generation guards');
+            _generationInProgress = false;
+            window.TunnelVision_isRecursiveToolPass = false;
+        });
     } else {
         if (event_types.GENERATION_STOPPED) {
-            eventSource.on(event_types.GENERATION_STOPPED, () => { _generationInProgress = false; window.TunnelVision_isRecursiveToolPass = false; });
+            eventSource.on(event_types.GENERATION_STOPPED, () => {
+                console.debug('[TunnelVision] GENERATION_STOPPED — clearing generation guards');
+                _generationInProgress = false;
+                window.TunnelVision_isRecursiveToolPass = false;
+            });
         }
     }
 
@@ -136,6 +144,7 @@ async function onChatChanged() {
 }
 
 async function onWorldInfoUpdated() {
+    console.debug(`[TunnelVision] WORLDINFO_UPDATED fired (generationInProgress=${_generationInProgress})`);
     refreshUI();
     if (_generationInProgress) {
         console.debug('[TunnelVision] Skipping tool re-registration during active generation');
@@ -277,6 +286,7 @@ function cleanOrphanedToolInvocations() {
         if (!last.is_system || !Array.isArray(last.extra?.tool_invocations)) break;
 
         // This is an orphaned tool_invocations message at the tail -- remove it
+        console.debug(`[TunnelVision] Removing orphaned tool_invocations message at index ${chat.length - 1} (tools: ${last.extra.tool_invocations.map(i => i.name).join(', ')})`);
         chat.length = chat.length - 1;
         removed++;
     }
@@ -291,6 +301,7 @@ function cleanOrphanedToolInvocations() {
  * Runs before ST assembles the next request, so it can validate TV tool state first.
  */
 async function onGenerationStarted(type, opts, dryRun) {
+    console.debug(`[TunnelVision] GENERATION_STARTED: type="${type}" dryRun=${dryRun} generationInProgress=${_generationInProgress}`);
     // Skip dry runs (ST's token counting passes) — no sidecar calls or heavy work needed.
     // Do NOT set _generationInProgress on dry runs: they never fire MESSAGE_RECEIVED or
     // GENERATION_ENDED to clear it, so it would stay true forever and block tool re-registration.
@@ -304,6 +315,7 @@ async function onGenerationStarted(type, opts, dryRun) {
     const context = getContext();
     const lastMsg = context.chat?.[context.chat.length - 1];
     const isRecursiveToolPass = lastMsg?.extra?.tool_invocations != null;
+    console.debug(`[TunnelVision] GENERATION_STARTED: isRecursiveToolPass=${isRecursiveToolPass} chatLength=${context.chat?.length} lastMsgType=${lastMsg?.is_system ? 'system' : lastMsg?.is_user ? 'user' : 'assistant'} hasToolInvocations=${!!lastMsg?.extra?.tool_invocations}`);
 
     // Expose recursive state globally so presets, macros, and other extensions can
     // skip work during recursive tool passes.
@@ -399,6 +411,7 @@ async function onGenerationStarted(type, opts, dryRun) {
  * Fires after the chat model's response is received (MESSAGE_RECEIVED).
  */
 async function onMessageReceived(_messageId, type) {
+    console.debug(`[TunnelVision] MESSAGE_RECEIVED: messageId=${_messageId} type="${type}"`);
     // Clear generation guards BEFORE the sidecar writer runs, so that lorebook
     // writes triggered by the writer do not get blocked by the generation guard.
     _generationInProgress = false;

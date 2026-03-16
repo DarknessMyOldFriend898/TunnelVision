@@ -93,7 +93,6 @@ Actions:
 - "remove": Delete a note by ID (when it's no longer needed)
 - "clear": Remove all notes (fresh start)`,
         parameters: {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
             properties: {
                 action: {

@@ -31,7 +31,6 @@ You must know the entry's UID (obtained from a previous TunnelVision_Search retr
 Available lorebooks:
 ${bookDesc}`,
         parameters: {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
             properties: {
                 lorebook: {

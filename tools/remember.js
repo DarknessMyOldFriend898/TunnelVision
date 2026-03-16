@@ -112,7 +112,6 @@ ${bookDesc}
 
 Save entries to the lorebook where they belong based on the descriptions above. Provide a descriptive title, the content to remember, optional keywords for cross-referencing, and optionally a tree node_id to file it under (omit to place at root).`,
         parameters: {
-            $schema: 'http://json-schema.org/draft-04/schema#',
             type: 'object',
             properties: {
                 lorebook: {
