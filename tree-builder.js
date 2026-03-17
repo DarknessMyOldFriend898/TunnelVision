@@ -716,8 +716,11 @@ async function generateBookSummary(rootNode, lorebookName) {
  * @param {Object} bookData - Cached lorebook data (loaded once, passed through)
  * @param {number} totalEntryCount
  */
-async function subdivideLargeNodes(node, bookData, totalEntryCount = 0) {
+const MAX_SUBDIVISION_DEPTH = 4;
+
+async function subdivideLargeNodes(node, bookData, totalEntryCount = 0, _depth = 0) {
     if (!bookData || !bookData.entries) return;
+    if (_depth >= MAX_SUBDIVISION_DEPTH) return;
 
     const maxPerNode = getEffectiveGranularity(totalEntryCount).maxEntries;
     if (node.entryUids.length > maxPerNode) {
@@ -787,7 +790,7 @@ async function subdivideLargeNodes(node, bookData, totalEntryCount = 0) {
 
     // Recurse into children in parallel — sibling nodes are independent
     if (node.children.length > 0) {
-        const childTasks = node.children.map(child => () => subdivideLargeNodes(child, bookData, totalEntryCount));
+        const childTasks = node.children.map(child => () => subdivideLargeNodes(child, bookData, totalEntryCount, _depth + 1));
         await runWithConcurrency(childTasks, BUILD_CONCURRENCY);
     }
 }
