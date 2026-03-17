@@ -31,6 +31,8 @@ import { initCommands } from './commands.js';
 import { initAutoSummary } from './auto-summary.js';
 import { runSidecarRetrieval } from './sidecar-retrieval.js';
 import { runSidecarWriter } from './sidecar-writer.js';
+import { separateConditions, isEvaluableCondition, formatCondition, EVALUABLE_TYPES, CONDITION_LABELS, getKeywordProbability, setKeywordProbability } from './conditions.js';
+import { loadWorldInfo, saveWorldInfo } from '../../../world-info.js';
 
 const EXTENSION_NAME = 'tunnelvision';
 const EXTENSION_FOLDER = `third-party/TunnelVision`;
@@ -64,6 +66,9 @@ async function init() {
 
     // Wire up auto-summary interval tracking
     initAutoSummary();
+
+    // Inject condition editor into ST's base lorebook editor
+    initWIConditionInjector();
 
     // Load initial state
     refreshUI();
@@ -155,6 +160,327 @@ async function onWorldInfoUpdated() {
 
 async function onAppReady() {
     await registerTools();
+}
+
+// ─── WI Editor Condition Injector ────────────────────────────────
+
+let _wiCondInjecting = false;
+
+function initWIConditionInjector() {
+    setInterval(async () => {
+        if (_wiCondInjecting) return;
+        const settings = getSettings();
+        if (!settings.conditionalTriggersEnabled) return;
+
+        const list = document.getElementById('world_popup_entries_list');
+        if (!list || !list.offsetParent) return;
+
+        const sel = document.getElementById('world_editor_select');
+        if (!sel) return;
+        const bookName = sel.options[sel.selectedIndex]?.textContent;
+        if (!bookName) return;
+
+        const enabledBooks = settings.enabledLorebooks || {};
+        if (!enabledBooks[bookName]) return;
+
+        const kwBlocks = list.querySelectorAll('[name="keywordsAndLogicBlock"]');
+        if (kwBlocks.length === 0) return;
+
+        _wiCondInjecting = true;
+        try {
+            const bookData = await loadWorldInfo(bookName);
+            if (!bookData?.entries) return;
+
+            for (const kwBlock of kwBlocks) {
+                if (kwBlock.querySelector('.tv-cond-inline')) continue;
+                const entryEl = kwBlock.closest('.world_entry');
+                if (!entryEl) continue;
+                const uid = Number(entryEl.getAttribute('uid'));
+                if (isNaN(uid)) continue;
+
+                const found = Object.values(bookData.entries).some(e => e.uid === uid);
+                if (!found) continue;
+
+                injectConditionButton(entryEl, bookName, bookData);
+            }
+        } finally {
+            _wiCondInjecting = false;
+        }
+    }, 500);
+}
+
+/**
+ * Inject condition UI inline under an expanded WI entry's keyword inputs.
+ * @param {HTMLElement} entryEl
+ * @param {string} bookName
+ * @param {object} bookData
+ */
+function injectConditionButton(entryEl, bookName, bookData) {
+    const uid = Number(entryEl.getAttribute('uid'));
+    if (isNaN(uid)) return;
+
+    let entry = null;
+    for (const key of Object.keys(bookData.entries)) {
+        if (bookData.entries[key].uid === uid) {
+            entry = bookData.entries[key];
+            break;
+        }
+    }
+    if (!entry) return;
+
+    const keywordsBlock = entryEl.querySelector('[name="keywordsAndLogicBlock"]');
+    if (!keywordsBlock) return;
+
+    // Find the primary and secondary keyword input containers
+    const kwInputs = keywordsBlock.querySelectorAll('.flex1');
+    const primaryKwContainer = kwInputs[0]; // Primary Keywords column
+    const secondaryKwContainer = kwInputs.length > 1 ? kwInputs[kwInputs.length - 1] : null; // Optional Filter column
+
+    // ── Build inline condition rows under each keyword input ──
+
+    function buildInlineRow(group) {
+        const row = document.createElement('div');
+        row.className = 'tv-cond-inline';
+        row.dataset.group = group;
+
+        const tagsWrap = document.createElement('span');
+        tagsWrap.className = 'tv-cond-inline-tags';
+        row.appendChild(tagsWrap);
+
+        // ⚡+ add button
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.className = 'tv-cond-inline-add';
+        addBtn.title = 'Add condition';
+        const boltIcon = document.createElement('i');
+        boltIcon.className = 'fa-solid fa-bolt';
+        addBtn.appendChild(boltIcon);
+        const plusText = document.createTextNode('+');
+        addBtn.appendChild(plusText);
+        row.appendChild(addBtn);
+
+        return { row, tagsWrap, addBtn };
+    }
+
+    const primary = buildInlineRow('primary');
+    const secondary = secondaryKwContainer ? buildInlineRow('secondary') : null;
+
+    // ── Add-condition popover (shared, repositions on click) ──
+    const popover = document.createElement('div');
+    popover.className = 'tv-cond-popover';
+    popover.style.display = 'none';
+
+    const popTypeSelect = document.createElement('select');
+    popTypeSelect.className = 'tv-cond-pop-type';
+    for (const t of EVALUABLE_TYPES) {
+        const opt = document.createElement('option');
+        opt.value = t;
+        opt.textContent = CONDITION_LABELS[t] || t;
+        popTypeSelect.appendChild(opt);
+    }
+    popover.appendChild(popTypeSelect);
+
+    const popValueInput = document.createElement('input');
+    popValueInput.type = 'text';
+    popValueInput.className = 'tv-cond-pop-value';
+    popValueInput.placeholder = 'value…';
+    popover.appendChild(popValueInput);
+
+    const popAddBtn = document.createElement('button');
+    popAddBtn.type = 'button';
+    popAddBtn.className = 'tv-cond-pop-add menu_button menu_button_icon';
+    const popAddIcon = document.createElement('i');
+    popAddIcon.className = 'fa-solid fa-plus';
+    popAddBtn.appendChild(popAddIcon);
+    popover.appendChild(popAddBtn);
+
+    let _activeGroup = 'primary';
+
+    // ── Render tags ──
+    function renderTags() {
+        const pConds = separateConditions(entry.key || []).conditions;
+        const sConds = separateConditions(entry.keysecondary || []).conditions;
+
+        renderGroupTags(primary.tagsWrap, pConds, 'primary');
+        if (secondary) renderGroupTags(secondary.tagsWrap, sConds, 'secondary');
+
+        // Show/hide inline rows based on content + popover state
+        primary.row.classList.toggle('tv-cond-has-tags', pConds.length > 0 || _activeGroup === 'primary');
+        if (secondary) secondary.row.classList.toggle('tv-cond-has-tags', sConds.length > 0 || _activeGroup === 'secondary');
+    }
+
+    function renderGroupTags(container, conditions, group) {
+        container.textContent = '';
+
+        for (const cond of conditions) {
+            const tag = document.createElement('span');
+            tag.className = 'tv-cond-tag';
+            if (cond.negated) tag.classList.add('tv-cond-negated');
+            if (cond.type === 'freeform') tag.classList.add('tv-cond-freeform');
+
+            // Negation toggle button
+            const negBtn = document.createElement('span');
+            negBtn.className = 'tv-cond-neg-toggle';
+            negBtn.textContent = cond.negated ? '≠' : '=';
+            negBtn.title = cond.negated ? 'Click to require (remove NOT)' : 'Click to negate (add NOT)';
+            negBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const arr = group === 'primary' ? entry.key : entry.keysecondary;
+                const oldStr = formatCondition(cond);
+                const idx = arr.indexOf(oldStr);
+                if (idx < 0) return;
+                // Migrate probability to new condition string
+                const oldProb = getKeywordProbability(entry, oldStr);
+                const newCond = { type: cond.type, value: cond.value, negated: !cond.negated };
+                const newStr = formatCondition(newCond);
+                arr[idx] = newStr;
+                if (oldProb < 100) setKeywordProbability(entry, newStr, oldProb);
+                if (entry.tvKeywordProbability?.[oldStr] !== undefined) delete entry.tvKeywordProbability[oldStr];
+                await saveWorldInfo(bookName, bookData, true);
+                renderTags();
+            });
+            tag.appendChild(negBtn);
+
+            // Type label
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'tv-cond-type-label';
+            typeSpan.textContent = (CONDITION_LABELS[cond.type] || cond.type).toUpperCase();
+            tag.appendChild(typeSpan);
+
+            // Separator
+            const sep = document.createElement('span');
+            sep.className = 'tv-cond-sep';
+            sep.textContent = cond.negated ? ' ≠ ' : ' : ';
+            tag.appendChild(sep);
+
+            // Value
+            const valSpan = document.createElement('span');
+            valSpan.className = 'tv-cond-val';
+            valSpan.textContent = cond.value;
+            tag.appendChild(valSpan);
+
+            // Probability badge
+            const condStr = formatCondition(cond);
+            const prob = getKeywordProbability(entry, condStr);
+            const probBadge = document.createElement('span');
+            probBadge.className = 'tv-cond-prob';
+            probBadge.textContent = `${prob}%`;
+            probBadge.title = 'Click to change probability (0-100)';
+            if (prob < 100) probBadge.classList.add('tv-cond-prob-reduced');
+            probBadge.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const current = getKeywordProbability(entry, condStr);
+                const input = prompt(`Probability for ${condStr} (0-100):`, String(current));
+                if (input === null) return;
+                const val = parseInt(input, 10);
+                if (isNaN(val) || val < 0 || val > 100) return;
+                setKeywordProbability(entry, condStr, val);
+                await saveWorldInfo(bookName, bookData, true);
+                probBadge.textContent = `${val}%`;
+                probBadge.classList.toggle('tv-cond-prob-reduced', val < 100);
+            });
+            tag.appendChild(probBadge);
+
+            // Remove button
+            const xBtn = document.createElement('i');
+            xBtn.className = 'fa-solid fa-xmark tv-cond-remove';
+            xBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const arr = group === 'primary' ? entry.key : entry.keysecondary;
+                const idx = arr.indexOf(condStr);
+                if (idx >= 0) {
+                    arr.splice(idx, 1);
+                    await saveWorldInfo(bookName, bookData, true);
+                    renderTags();
+                }
+            });
+            tag.appendChild(xBtn);
+
+            container.appendChild(tag);
+        }
+    }
+
+    // ── Popover logic ──
+    function showPopover(group) {
+        _activeGroup = group;
+        popover.style.display = '';
+        popValueInput.value = '';
+        popValueInput.placeholder = popTypeSelect.value === 'freeform' ? 'describe when this should fire…' : 'value…';
+        // Attach popover after the relevant inline row
+        const targetRow = group === 'primary' ? primary.row : secondary.row;
+        targetRow.parentNode.insertBefore(popover, targetRow.nextSibling);
+        popValueInput.focus();
+    }
+
+    function hidePopover() {
+        popover.style.display = 'none';
+    }
+
+    async function addCondition() {
+        const type = popTypeSelect.value;
+        const value = popValueInput.value.trim();
+        if (!value) return;
+
+        const condStr = `[${type}:${value}]`;
+        const arr = _activeGroup === 'primary'
+            ? (entry.key || (entry.key = []))
+            : (entry.keysecondary || (entry.keysecondary = []));
+        if (arr.includes(condStr)) return;
+
+        arr.push(condStr);
+        await saveWorldInfo(bookName, bookData, true);
+        renderTags();
+        popValueInput.value = '';
+        popValueInput.focus();
+    }
+
+    // Update placeholder when type changes
+    popTypeSelect.addEventListener('change', () => {
+        popValueInput.placeholder = popTypeSelect.value === 'freeform' ? 'describe when this should fire…' : 'value…';
+    });
+
+    popAddBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        addCondition();
+    });
+
+    popValueInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.stopPropagation();
+            e.preventDefault();
+            addCondition();
+        }
+        if (e.key === 'Escape') {
+            hidePopover();
+        }
+    });
+
+    primary.addBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (popover.style.display !== 'none' && _activeGroup === 'primary') {
+            hidePopover();
+        } else {
+            showPopover('primary');
+        }
+    });
+
+    if (secondary) {
+        secondary.addBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (popover.style.display !== 'none' && _activeGroup === 'secondary') {
+                hidePopover();
+            } else {
+                showPopover('secondary');
+            }
+        });
+    }
+
+    // ── Initial render ──
+    renderTags();
+
+    // ── Append to DOM ──
+    if (primaryKwContainer) primaryKwContainer.appendChild(primary.row);
+    if (secondary && secondaryKwContainer) secondaryKwContainer.appendChild(secondary.row);
 }
 
 /**

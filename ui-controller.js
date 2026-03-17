@@ -40,6 +40,7 @@ import { registerTools, unregisterTools, getDefaultToolDescriptions, stripDynami
 import { runDiagnostics } from './diagnostics.js';
 import { applyRecurseLimit } from './index.js';
 import { refreshHiddenToolCallMessages } from './activity-feed.js';
+import { separateConditions, isEvaluableCondition, formatCondition, EVALUABLE_TYPES, CONDITION_LABELS, getKeywordProbability, setKeywordProbability } from './conditions.js';
 import { callGenericPopup, POPUP_TYPE } from '../../../popup.js';
 
 
@@ -74,6 +75,12 @@ export function bindUIEvents() {
     });
 
     $('#tv_global_enabled').on('change', onGlobalToggle);
+    $('#tv_conditional_triggers_master').on('change', function () {
+        const settings = getSettings();
+        settings.conditionalTriggersEnabled = $(this).prop('checked');
+        $('#tv_conditional_triggers').prop('checked', settings.conditionalTriggersEnabled);
+        saveSettingsDebounced();
+    });
     $('#tv_lorebook_select').on('change', onLorebookSelect);
     $('#tv_lorebook_enabled').on('change', onLorebookToggle);
     $('#tv_book_description').on('input', onBookDescriptionChange);
@@ -168,6 +175,12 @@ export function bindUIEvents() {
     $('#tv_sidecar_auto_retrieval').on('change', onSidecarAutoRetrievalToggle);
     $('#tv_sidecar_context_messages').on('input', onSidecarContextMessagesChange);
     $('#tv_sidecar_max_injection').on('input', onSidecarMaxInjectionChange);
+    $('#tv_conditional_triggers').on('change', function () {
+        const settings = getSettings();
+        settings.conditionalTriggersEnabled = $(this).prop('checked');
+        $('#tv_conditional_triggers_master').prop('checked', settings.conditionalTriggersEnabled);
+        saveSettingsDebounced();
+    });
 
     // Sidecar post-gen writer
     $('#tv_sidecar_post_gen_writer').on('change', onSidecarPostGenWriterToggle);
@@ -197,6 +210,8 @@ export function refreshUI() {
 
     $('#tv_global_enabled').prop('checked', globalEnabled);
     $('#tv_main_controls').toggle(globalEnabled);
+    $('#tv_conditional_master_row').toggle(globalEnabled);
+    $('#tv_conditional_triggers_master').prop('checked', settings.conditionalTriggersEnabled !== false);
 
     // Sync tool toggles from settings
     const disabledTools = settings.disabledTools || {};
@@ -382,6 +397,7 @@ function onGlobalToggle() {
     settings.globalEnabled = enabled;
     saveSettingsDebounced();
     $('#tv_main_controls').toggle(enabled);
+    $('#tv_conditional_master_row').toggle(enabled);
     enabled ? registerTools() : unregisterTools();
 }
 
@@ -995,6 +1011,9 @@ function populateConnectionProfiles() {
     $('#tv_sidecar_context_messages').val(settings.sidecarContextMessages ?? 10);
     $('#tv_sidecar_max_injection').val(settings.sidecarMaxInjectionTokens ?? 4000);
 
+    // Sync conditional triggers toggle
+    $('#tv_conditional_triggers').prop('checked', settings.conditionalTriggersEnabled !== false);
+
     // Sync compact tool prompts
     $('#tv_compact_tool_prompts').prop('checked', settings.compactToolPrompts === true);
 
@@ -1446,17 +1465,154 @@ async function onOpenTreeEditor() {
                     </div>`).find('.tv-expand-node-text').text(node.summary).end());
                 }
 
-                // Keys
-                const keys = entry.key || [];
-                if (keys.length > 0) {
+                // Keys (filter out condition tags — shown separately below)
+                const allKeys = entry.key || [];
+                const regularKeys = allKeys.filter(k => !isEvaluableCondition(k));
+                if (regularKeys.length > 0) {
                     const $keys = $('<div class="tv-expand-keys"></div>');
                     $keys.append($('<span class="tv-expand-label">Keys</span>'));
                     const $tags = $('<div class="tv-expand-key-tags"></div>');
-                    for (const k of keys) {
+                    for (const k of regularKeys) {
                         $tags.append($('<span class="tv-expand-key-tag"></span>').text(k));
                     }
                     $keys.append($tags);
                     $expand.append($keys);
+                }
+
+                // Conditions editor — parsed from key[] and keysecondary[]
+                {
+                    const primaryParsed = separateConditions(entry.key || []);
+                    const secondaryParsed = separateConditions(entry.keysecondary || []);
+                    const hasPrimary = primaryParsed.conditions.length > 0;
+                    const hasSecondary = secondaryParsed.conditions.length > 0;
+
+                    const $condSection = $('<div class="tv-expand-conditions"></div>');
+                    $condSection.append($('<span class="tv-expand-label">Conditions</span>'));
+
+                    // Render existing condition tags
+                    const $condTags = $('<div class="tv-condition-tags"></div>');
+
+                    const renderCondTag = (cond, group) => {
+                        const typeLabel = (CONDITION_LABELS[cond.type] || cond.type).toUpperCase();
+                        const condStr = formatCondition(cond);
+                        const negatedClass = cond.negated ? ' is-negated' : '';
+                        const negTitle = cond.negated ? 'Negated — click to un-negate' : 'Not negated — click to negate';
+                        const prob = getKeywordProbability(entry, condStr);
+                        const probClass = prob < 100 ? ' tv-condition-prob-reduced' : '';
+                        const $tag = $(`<span class="tv-condition-tag${negatedClass}" data-group="${group}" title="${group} condition">
+                            <button class="tv-condition-neg-toggle tv-btn-icon" title="${negTitle}"><i class="fa-solid ${cond.negated ? 'fa-ban' : 'fa-check'}"></i></button>
+                            <span class="tv-condition-type">${typeLabel}</span>:<span class="tv-condition-value">${escapeHtml(cond.value)}</span>
+                            <span class="tv-condition-prob${probClass}" title="Click to change probability (0-100)">${prob}%</span>
+                            <i class="fa-solid fa-xmark tv-condition-remove" title="Remove condition"></i>
+                        </span>`);
+                        $tag.find('.tv-condition-prob').on('click', (e) => {
+                            e.stopPropagation();
+                            const current = getKeywordProbability(entry, condStr);
+                            const input = prompt(`Probability for ${condStr} (0-100):`, String(current));
+                            if (input === null) return;
+                            const val = parseInt(input, 10);
+                            if (isNaN(val) || val < 0 || val > 100) return;
+                            setKeywordProbability(entry, condStr, val);
+                            saveWorldInfo(bookName, bookData, true);
+                            $tag.find('.tv-condition-prob').text(`${val}%`).toggleClass('tv-condition-prob-reduced', val < 100);
+                            toastr.info(`Set ${condStr} probability to ${val}%`, 'TunnelVision');
+                        });
+                        $tag.find('.tv-condition-neg-toggle').on('click', (e) => {
+                            e.stopPropagation();
+                            const oldStr = formatCondition(cond);
+                            const targetArr = group === 'primary' ? entry.key : entry.keysecondary;
+                            const idx = targetArr.indexOf(oldStr);
+                            if (idx < 0) return;
+                            // Migrate probability to new condition string
+                            const oldProb = getKeywordProbability(entry, oldStr);
+                            cond.negated = !cond.negated;
+                            const newStr = formatCondition(cond);
+                            targetArr[idx] = newStr;
+                            if (oldProb < 100) {
+                                setKeywordProbability(entry, newStr, oldProb);
+                            }
+                            if (entry.tvKeywordProbability?.[oldStr] !== undefined) {
+                                delete entry.tvKeywordProbability[oldStr];
+                            }
+                            saveWorldInfo(bookName, bookData, true);
+                            $tag.toggleClass('is-negated', !!cond.negated);
+                            const $icon = $tag.find('.tv-condition-neg-toggle i');
+                            $icon.attr('class', `fa-solid ${cond.negated ? 'fa-ban' : 'fa-check'}`);
+                            $tag.find('.tv-condition-neg-toggle').attr('title', cond.negated ? 'Negated — click to un-negate' : 'Not negated — click to negate');
+                            toastr.info(`${newStr} (${group})`, 'TunnelVision');
+                        });
+                        $tag.find('.tv-condition-remove').on('click', (e) => {
+                            e.stopPropagation();
+                            const targetArr = group === 'primary' ? entry.key : entry.keysecondary;
+                            const idx = targetArr.indexOf(condStr);
+                            if (idx >= 0) {
+                                targetArr.splice(idx, 1);
+                                // Clean up probability data
+                                if (entry.tvKeywordProbability?.[condStr] !== undefined) {
+                                    delete entry.tvKeywordProbability[condStr];
+                                }
+                                saveWorldInfo(bookName, bookData, true);
+                                $tag.fadeOut(150, () => $tag.remove());
+                                toastr.info(`Removed ${condStr}`, 'TunnelVision');
+                            }
+                        });
+                        return $tag;
+                    };
+
+                    for (const c of primaryParsed.conditions) $condTags.append(renderCondTag(c, 'primary'));
+                    for (const c of secondaryParsed.conditions) $condTags.append(renderCondTag(c, 'secondary'));
+
+                    if (!hasPrimary && !hasSecondary) {
+                        $condTags.append($('<span class="tv-condition-empty">No conditions set</span>'));
+                    }
+                    $condSection.append($condTags);
+
+                    // Add condition controls
+                    const typeOptions = [...EVALUABLE_TYPES].map(t => `<option value="${t}">${CONDITION_LABELS[t] || t}</option>`).join('');
+                    const $addRow = $(`<div class="tv-condition-add-row">
+                        <select class="tv-condition-type-select"><${typeOptions}</select>
+                        <input type="text" class="tv-condition-value-input" placeholder="value (e.g. tense, forest)" />
+                        <select class="tv-condition-group-select">
+                            <option value="primary">Primary</option>
+                            <option value="secondary">Secondary</option>
+                        </select>
+                        <button class="tv-popup-btn tv-popup-btn-sm tv-condition-add-btn" title="Add condition"><i class="fa-solid fa-plus"></i></button>
+                    </div>`);
+
+                    $addRow.find('.tv-condition-add-btn').on('click', (e) => {
+                        e.stopPropagation();
+                        const type = $addRow.find('.tv-condition-type-select').val();
+                        const value = $addRow.find('.tv-condition-value-input').val().trim();
+                        const group = $addRow.find('.tv-condition-group-select').val();
+                        if (!value) {
+                            toastr.warning('Enter a condition value.', 'TunnelVision');
+                            return;
+                        }
+                        const condStr = `[${type}:${value}]`;
+                        const targetArr = group === 'primary' ? (entry.key || (entry.key = [])) : (entry.keysecondary || (entry.keysecondary = []));
+                        if (targetArr.includes(condStr)) {
+                            toastr.warning('Condition already exists.', 'TunnelVision');
+                            return;
+                        }
+                        targetArr.push(condStr);
+                        saveWorldInfo(bookName, bookData, true);
+                        // Add tag visually
+                        $condTags.find('.tv-condition-empty').remove();
+                        $condTags.append(renderCondTag({ type, value, negated: false }, group));
+                        $addRow.find('.tv-condition-value-input').val('');
+                        toastr.success(`Added ${condStr} (${group})`, 'TunnelVision');
+                    });
+
+                    // Allow Enter key to add
+                    $addRow.find('.tv-condition-value-input').on('keydown', (e) => {
+                        if (e.key === 'Enter') {
+                            e.stopPropagation();
+                            $addRow.find('.tv-condition-add-btn').trigger('click');
+                        }
+                    });
+
+                    $condSection.append($addRow);
+                    $expand.append($condSection);
                 }
 
                 // Content

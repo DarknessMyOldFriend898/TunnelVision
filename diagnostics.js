@@ -20,6 +20,7 @@ import {
 } from './tree-store.js';
 import { getContext } from '../../../st-context.js';
 import { getActiveTunnelVisionBooks, ALL_TOOL_NAMES, CONFIRMABLE_TOOLS, preflightToolRuntimeState } from './tool-registry.js';
+import { hasEvaluableConditions, separateConditions, formatCondition, getKeywordProbability } from './conditions.js';
 
 
 /**
@@ -91,6 +92,8 @@ export async function runDiagnostics() {
     results.push(...checkBookDescriptions());
     results.push(...checkBookPermissions());
     results.push(checkSidecarAutoRetrieval());
+    results.push(checkConditionalTriggers());
+    results.push(...await checkKeywordProbabilities());
     results.push(checkSidecarPostGenWriter());
     results.push(checkTurnSummaryEvent());
 
@@ -1518,6 +1521,78 @@ function checkSidecarPostGenWriter() {
     }
 
     return pass(`Sidecar post-gen writer: enabled (${settings.sidecarWriterContextMessages ?? 15} messages context, max ${maxOps} ops/turn)`);
+}
+
+/** Check conditional triggers configuration. */
+function checkConditionalTriggers() {
+    const settings = getSettings();
+    if (settings.conditionalTriggersEnabled === false) {
+        return pass('Narrative conditionals: disabled');
+    }
+
+    if (!settings.sidecarAutoRetrieval) {
+        return warn('Narrative conditionals are enabled but sidecar auto-retrieval is OFF. Conditionals require auto-retrieval to evaluate. Enable "Auto-Retrieve Before Generation" in sidecar settings.');
+    }
+
+    if (!settings.connectionProfile) {
+        return warn('Narrative conditionals are enabled but no sidecar connection profile is selected. Conditionals require a sidecar LLM to evaluate scene state.');
+    }
+
+    return pass('Narrative conditionals: enabled (conditions on entries will be evaluated by sidecar)');
+}
+
+/**
+ * Check for entries with per-keyword probability values.
+ * Warns if probabilities reference keywords that no longer exist on the entry.
+ */
+async function checkKeywordProbabilities() {
+    const results = [];
+    const books = getActiveTunnelVisionBooks();
+    let totalProbs = 0;
+    let staleProbs = 0;
+
+    for (const bookName of books) {
+        const bookData = await loadWorldInfo(bookName);
+        if (!bookData?.entries) continue;
+
+        for (const key of Object.keys(bookData.entries)) {
+            const entry = bookData.entries[key];
+            if (!entry?.tvKeywordProbability) continue;
+
+            const probMap = entry.tvKeywordProbability;
+            const allKeywords = [...(entry.key || []), ...(entry.keysecondary || [])];
+
+            for (const kwStr of Object.keys(probMap)) {
+                totalProbs++;
+                if (!allKeywords.includes(kwStr)) {
+                    staleProbs++;
+                    // Auto-fix: remove stale probability entry
+                    delete probMap[kwStr];
+                }
+            }
+
+            // Clean up empty map
+            if (Object.keys(probMap).length === 0) {
+                delete entry.tvKeywordProbability;
+            }
+        }
+
+        if (staleProbs > 0) {
+            await saveWorldInfo(bookName, bookData, true);
+        }
+    }
+
+    if (staleProbs > 0) {
+        results.push(warn(`Cleaned ${staleProbs} stale keyword probability entries (keywords were removed but probability data lingered).`));
+    }
+
+    if (totalProbs > 0) {
+        results.push(pass(`Keyword probabilities: ${totalProbs - staleProbs} active across all entries`));
+    } else {
+        results.push(pass('Keyword probabilities: none configured (all keywords fire at 100%)'));
+    }
+
+    return results;
 }
 
 /** Remove UIDs from tree that aren't in the valid set. */

@@ -2120,6 +2120,361 @@
     color: #ec7fa0;
 }
 
+/* ===== WI Editor: Design B — Inline Conditions Under Keywords ===== */
+
+/* Inline row that appears under each keyword input */
+.tv-cond-inline {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+    margin-top: 4px;
+    padding-top: 4px;
+    border-top: 1px dashed rgba(0, 184, 148, 0.15);
+    min-height: 22px;
+}
+
+.tv-cond-inline-tags {
+    display: contents;
+}
+
+/* ⚡+ add button (inline) */
+.tv-cond-inline-add {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 1px 6px;
+    border: 1px dashed rgba(0, 184, 148, 0.35);
+    border-radius: 10px;
+    color: #00b894;
+    cursor: pointer;
+    font-size: 10px;
+    background: transparent;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.tv-cond-inline-add:hover {
+    background: rgba(0, 184, 148, 0.1);
+    border-color: rgba(0, 184, 148, 0.5);
+    color: #00cec9;
+}
+
+.tv-cond-inline-add i {
+    font-size: 9px;
+}
+
+/* ── Condition Tags (shared between primary/secondary) ── */
+.tv-cond-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-size: 10px;
+    background: rgba(0, 184, 148, 0.12);
+    border: 1px solid rgba(0, 184, 148, 0.3);
+    color: #00cec9;
+    cursor: default;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.tv-cond-tag:hover {
+    border-color: rgba(0, 184, 148, 0.5);
+    background: rgba(0, 184, 148, 0.18);
+}
+
+/* Negated tag — red-tinted */
+.tv-cond-tag.tv-cond-negated {
+    background: rgba(214, 48, 49, 0.1);
+    border-color: rgba(214, 48, 49, 0.35);
+    color: #ff7675;
+}
+
+.tv-cond-tag.tv-cond-negated:hover {
+    background: rgba(214, 48, 49, 0.18);
+    border-color: rgba(214, 48, 49, 0.5);
+}
+
+/* Freeform tag — amber */
+.tv-cond-tag.tv-cond-freeform {
+    background: rgba(253, 203, 110, 0.1);
+    border-color: rgba(253, 203, 110, 0.35);
+    color: #fdcb6e;
+}
+
+.tv-cond-tag.tv-cond-freeform:hover {
+    background: rgba(253, 203, 110, 0.18);
+    border-color: rgba(253, 203, 110, 0.5);
+}
+
+/* Freeform + negated */
+.tv-cond-tag.tv-cond-freeform.tv-cond-negated {
+    background: rgba(214, 48, 49, 0.08);
+    border-color: rgba(214, 48, 49, 0.3);
+    color: #ff7675;
+}
+
+/* Negation toggle (= / ≠) */
+.tv-cond-neg-toggle {
+    cursor: pointer;
+    font-weight: 700;
+    font-size: 11px;
+    padding: 0 2px;
+    opacity: 0.7;
+    transition: opacity 0.12s;
+    user-select: none;
+}
+
+.tv-cond-neg-toggle:hover {
+    opacity: 1;
+}
+
+.tv-cond-negated .tv-cond-neg-toggle {
+    color: #d63031;
+    opacity: 1;
+}
+
+/* Type label */
+.tv-cond-type-label {
+    font-weight: 700;
+    font-size: 9px;
+    letter-spacing: 0.3px;
+}
+
+/* Separator (: or ≠) */
+.tv-cond-sep {
+    opacity: 0.6;
+    font-size: 9px;
+}
+
+/* Value text */
+.tv-cond-val {
+    font-weight: 400;
+    max-width: 150px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.tv-cond-freeform .tv-cond-val {
+    max-width: 200px;
+    font-style: italic;
+}
+
+/* Remove × button */
+.tv-cond-remove {
+    cursor: pointer;
+    opacity: 0.4;
+    margin-left: 2px;
+    font-size: 8px;
+    transition: all 0.12s;
+}
+
+.tv-cond-remove:hover {
+    opacity: 1;
+    color: #d63031;
+}
+
+/* ── Per-Keyword Probability Badge (ST lorebook editor) ── */
+.tv-cond-prob {
+    font-size: 8px;
+    font-weight: 600;
+    padding: 0 3px;
+    margin-left: 3px;
+    border-radius: 3px;
+    background: rgba(0, 184, 148, 0.2);
+    color: rgba(0, 184, 148, 0.9);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+}
+.tv-cond-prob:hover {
+    background: rgba(0, 184, 148, 0.35);
+    color: #00b894;
+}
+.tv-cond-prob-reduced {
+    background: rgba(253, 203, 110, 0.25);
+    color: rgba(253, 203, 110, 0.95);
+}
+.tv-cond-prob-reduced:hover {
+    background: rgba(253, 203, 110, 0.4);
+    color: #fdcb6e;
+}
+
+/* ── Add-Condition Popover ── */
+.tv-cond-popover {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    padding: 4px 6px;
+    margin-top: 4px;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(0, 184, 148, 0.2);
+    border-radius: 6px;
+}
+
+.tv-cond-pop-type {
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    background: var(--SmartThemeBlurTintColor, #222);
+    color: var(--SmartThemeBodyColor, #ccc);
+    min-width: 80px;
+}
+
+.tv-cond-pop-value {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    background: var(--SmartThemeBlurTintColor, #222);
+    color: var(--SmartThemeBodyColor, #ccc);
+    flex: 1;
+    min-width: 100px;
+}
+
+.tv-cond-pop-add {
+    font-size: 11px;
+    padding: 2px 8px;
+    min-width: unset;
+}
+
+/* ===== Tree Editor: Condition Tags (tv-condition-* classes) ===== */
+.tv-condition-tags {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.tv-condition-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 206, 201, 0.12);
+    border: 1px solid rgba(0, 206, 201, 0.25);
+    color: #00cec9;
+    cursor: default;
+}
+
+.tv-condition-tag[data-group="secondary"] {
+    background: rgba(108, 92, 231, 0.12);
+    border-color: rgba(108, 92, 231, 0.25);
+    color: #a29bfe;
+}
+
+.tv-condition-tag.is-negated {
+    background: rgba(214, 48, 49, 0.1);
+    border-color: rgba(214, 48, 49, 0.3);
+    color: #ff7675;
+}
+
+.tv-condition-type {
+    font-weight: 600;
+}
+
+.tv-condition-value {
+    font-weight: 400;
+}
+
+.tv-condition-neg-toggle {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 2px;
+    font-size: 10px;
+    color: inherit;
+    opacity: 0.6;
+    transition: opacity 0.12s;
+}
+
+.tv-condition-neg-toggle:hover {
+    opacity: 1;
+}
+
+.tv-condition-remove {
+    cursor: pointer;
+    opacity: 0.5;
+    margin-left: 3px;
+    font-size: 9px;
+}
+
+.tv-condition-remove:hover {
+    opacity: 1;
+    color: #d63031;
+}
+
+/* ── Per-Keyword Probability Badge (tree editor) ── */
+.tv-condition-prob {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 0 4px;
+    margin-left: 3px;
+    border-radius: 3px;
+    background: rgba(0, 184, 148, 0.2);
+    color: rgba(0, 184, 148, 0.9);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+}
+.tv-condition-prob:hover {
+    background: rgba(0, 184, 148, 0.35);
+    color: #00b894;
+}
+.tv-condition-prob-reduced {
+    background: rgba(253, 203, 110, 0.25);
+    color: rgba(253, 203, 110, 0.95);
+}
+.tv-condition-prob-reduced:hover {
+    background: rgba(253, 203, 110, 0.4);
+    color: #fdcb6e;
+}
+
+.tv-condition-empty {
+    font-size: 10px;
+    color: var(--SmartThemeQuoteColor, #888);
+    font-style: italic;
+}
+
+.tv-condition-add-row {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.tv-condition-type-select,
+.tv-condition-group-select {
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    background: var(--SmartThemeBlurTintColor, #222);
+    color: var(--SmartThemeBodyColor, #ccc);
+    min-width: 70px;
+}
+
+.tv-condition-value-input {
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--SmartThemeBorderColor, #555);
+    background: var(--SmartThemeBlurTintColor, #222);
+    color: var(--SmartThemeBodyColor, #ccc);
+    flex: 1;
+    min-width: 80px;
+}
+
+.tv-condition-add-btn {
+    font-size: 11px;
+    padding: 2px 6px;
+}
+
 .tv-expand-node-box {
     background: rgba(108, 92, 231, 0.06);
     border: 1px solid rgba(108, 92, 231, 0.15);
@@ -2292,6 +2647,19 @@
 .tv-float-item-constant .tv-float-item-verb,
 .tv-float-item-constant .tv-float-item-icon {
     color: #636e72 !important;
+}
+
+/* In-progress tool call: pulsing glow */
+.tv-float-item-active {
+    animation: tv-active-pulse 1.2s ease-in-out infinite;
+    border-left: 2px solid rgba(232, 67, 147, 0.8);
+}
+.tv-float-item-active .tv-float-item-verb {
+    font-style: italic;
+}
+@keyframes tv-active-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
 }
 
 .tv-float-item-source {
