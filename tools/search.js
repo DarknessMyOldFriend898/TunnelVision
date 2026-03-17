@@ -545,22 +545,26 @@ export function getTreeOverview() {
 }
 
 /**
+ * Check whether at least one active book has a valid (non-empty) tree.
+ * @returns {boolean}
+ */
+function hasAnyValidTree() {
+    for (const bookName of getReadableBooks()) {
+        const tree = getTree(bookName);
+        if (tree && tree.root && ((tree.root.children || []).length > 0 || (tree.root.entryUids || []).length > 0)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * Returns the tool definition for ToolManager.registerFunctionTool().
- * @returns {Object|null} Tool definition or null if no valid trees exist
+ * @returns {Object|null} Tool definition or null if no active lorebooks
  */
 export function getDefinition() {
     const activeBooks = getReadableBooks();
     if (activeBooks.length === 0) return null;
-
-    let hasValidTree = false;
-    for (const bookName of activeBooks) {
-        const tree = getTree(bookName);
-        if (tree && tree.root && ((tree.root.children || []).length > 0 || (tree.root.entryUids || []).length > 0)) {
-            hasValidTree = true;
-            break;
-        }
-    }
-    if (!hasValidTree) return null;
 
     const settings = getSettings();
     const searchMode = settings.searchMode || 'traversal';
@@ -660,6 +664,12 @@ CROSS-BOOK SEARCH: Use action "search" with a "query" to find entries by keyword
         description,
         parameters,
         action: async (args) => {
+            // Tree validity check at call time (not registration time) to avoid
+            // race conditions where trees haven't loaded yet during startup.
+            if (!hasAnyValidTree()) {
+                return 'No valid tree index found. The tree may still be loading — try again, or build a tree first using the TunnelVision settings panel.';
+            }
+
             // Selective retrieval: resolve specific entries by UID
             if (selective && Array.isArray(args.entry_uids) && args.entry_uids.length > 0) {
                 return handleSelectiveEntryRetrieval(args.entry_uids);
