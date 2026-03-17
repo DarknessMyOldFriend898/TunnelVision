@@ -293,9 +293,14 @@ async function _buildTreeWithLLM(lorebookName, options = {}) {
     console.log(`[TunnelVision] Using granularity level ${gran.level} (${gran.label}): ${gran.targetCategories} top-level categories, max ${gran.maxEntries} entries/node`);
 
     // First chunk: fresh categorization (must run alone to establish categories)
+    // When multi-chunk, give the first prompt a manifest of ALL entry names so it
+    // creates categories that cover the entire lorebook, not just chunk 1's entries.
     progress(`Categorizing chunk 1/${chunks.length}`, 0);
     detail_(`${activeEntries.length} entries across ${chunks.length} chunk(s)`);
-    const firstPrompt = buildCategorizationPrompt(lorebookName, chunks[0], activeEntries.length);
+    const allEntryManifest = chunks.length > 1
+        ? activeEntries.map(e => formatEntryForLLM(e, 'names')).join('\n  - ')
+        : null;
+    const firstPrompt = buildCategorizationPrompt(lorebookName, chunks[0], activeEntries.length, allEntryManifest);
     const firstResponse = await generateRaw({
         prompt: firstPrompt,
         systemPrompt: 'You are a categorization assistant. Respond ONLY with valid JSON, no commentary.',
@@ -439,7 +444,7 @@ ${catList}
 Here are the NEW entries to categorize:
 ${entryList}
 
-Assign each entry to an existing category, or create new categories if none fit.${subCatHint} Every entry UID must appear exactly once.
+IMPORTANT: Every entry UID must appear exactly once. Assign each entry to the BEST-FIT existing category. Only create a new category if an entry truly does not fit any existing one.${subCatHint} Do NOT leave entries uncategorized — every UID must be in a category.
 
 Respond with ONLY valid JSON in this exact format:
 {
@@ -715,17 +720,27 @@ async function subdivideLargeNodes(node, bookData, totalEntryCount = 0) {
     if (!bookData || !bookData.entries) return;
 
     const maxPerNode = getEffectiveGranularity(totalEntryCount).maxEntries;
-    if (node.entryUids.length > maxPerNode && node.children.length === 0) {
+    if (node.entryUids.length > maxPerNode) {
         const detail = getSettings().llmBuildDetail || 'full';
         const nodeEntries = node.entryUids.map(uid => findEntryByUid(bookData.entries, uid)).filter(Boolean);
 
         if (nodeEntries.length > maxPerNode) {
+            // When the node already has children (e.g. root with orphaned entries from
+            // multi-chunk categorization), tell the LLM about existing categories so it
+            // can assign entries to them rather than creating redundant new ones.
+            const existingChildren = node.children.length > 0
+                ? node.children.map(c => c.label)
+                : [];
+            const existingHint = existingChildren.length > 0
+                ? `\n\nExisting sub-categories in "${node.label}": ${existingChildren.join(', ')}. Assign entries to these when they fit, or create new sub-categories for entries that don't fit any existing one.`
+                : '';
+
             try {
                 const gran = getEffectiveGranularity(totalEntryCount);
                 const subCatCount = Math.min(6, Math.ceil(nodeEntries.length / gran.maxEntries));
                 const entryList = nodeEntries.map(e => `  ${formatEntryForLLM(e, detail)}`).join('\n');
                 const response = await generateRaw({
-                    prompt: `You have ${nodeEntries.length} lorebook entries in "${node.label}". Split into 2-${subCatCount} sub-categories.\n\nEntries:\n${entryList}\n\nRespond ONLY with JSON: { "subcategories": [{ "label": "Name", "entries": [uid1, uid2] }] }`,
+                    prompt: `You have ${nodeEntries.length} lorebook entries in "${node.label}". Split into 2-${subCatCount} sub-categories. Every entry must be assigned.${existingHint}\n\nEntries:\n${entryList}\n\nRespond ONLY with JSON: { "subcategories": [{ "label": "Name", "entries": [uid1, uid2] }] }`,
                     systemPrompt: 'You are a categorization assistant. Respond ONLY with valid JSON, no commentary.',
                 });
                 if (response) {
@@ -733,19 +748,32 @@ async function subdivideLargeNodes(node, bookData, totalEntryCount = 0) {
                     if (jsonMatch) {
                         const parsed = JSON.parse(jsonMatch[0]);
                         if (parsed.subcategories && Array.isArray(parsed.subcategories)) {
+                            // Build lookup for existing children (case-insensitive)
+                            const childMap = new Map();
+                            for (const child of node.children) {
+                                childMap.set(child.label.toLowerCase(), child);
+                            }
+
                             const assigned = new Set();
                             for (const sub of parsed.subcategories) {
-                                const child = createTreeNode(sub.label || 'Unnamed', '');
+                                const subLabel = (sub.label || 'Unnamed').toLowerCase();
+                                // Merge into existing child if label matches
+                                const target = childMap.get(subLabel) || createTreeNode(sub.label || 'Unnamed', '');
+                                const isNew = !childMap.has(subLabel);
+
                                 if (Array.isArray(sub.entries)) {
                                     for (const uid of sub.entries) {
                                         const n = Number(uid);
                                         if (node.entryUids.includes(n) && !assigned.has(n)) {
-                                            addEntryToNode(child, n);
+                                            addEntryToNode(target, n);
                                             assigned.add(n);
                                         }
                                     }
                                 }
-                                if (child.entryUids.length > 0) node.children.push(child);
+                                if (isNew && target.entryUids.length > 0) {
+                                    node.children.push(target);
+                                    childMap.set(subLabel, target);
+                                }
                             }
                             node.entryUids = node.entryUids.filter(uid => !assigned.has(uid));
                         }
@@ -764,17 +792,23 @@ async function subdivideLargeNodes(node, bookData, totalEntryCount = 0) {
     }
 }
 
-function buildCategorizationPrompt(lorebookName, entries, totalEntryCount = 0) {
+function buildCategorizationPrompt(lorebookName, entries, totalEntryCount = 0, allEntryManifest = null) {
     const detail = getSettings().llmBuildDetail || 'full';
     const gran = getEffectiveGranularity(totalEntryCount);
     const entryList = entries.map(e => `  - ${formatEntryForLLM(e, detail)}`).join('\n');
 
-    return `You are organizing a lorebook called "${lorebookName}" into a hierarchical tree for efficient retrieval.
+    // When multi-chunk, show ALL entry names first so the LLM creates categories
+    // that cover the full lorebook, not just this chunk's entries.
+    const manifestSection = allEntryManifest
+        ? `\nThis lorebook has ${totalEntryCount} total entries. Here is a list of ALL entry names for context (you will only categorize the detailed entries below, but design your categories to accommodate all of these):\n  - ${allEntryManifest}\n`
+        : '';
 
-Here are the entries:
+    return `You are organizing a lorebook called "${lorebookName}" into a hierarchical tree for efficient retrieval.
+${manifestSection}
+Here are the entries to categorize now (with full details):
 ${entryList}
 
-Create a JSON hierarchy that groups these entries into logical categories. Use ${gran.targetCategories} top-level categories, each with sub-categories where natural. Aim for no more than ${gran.maxEntries} entries per leaf node. Every entry UID must appear exactly once.
+Create a JSON hierarchy that groups these entries into logical categories. Use ${gran.targetCategories} top-level categories, each with sub-categories where natural. Aim for no more than ${gran.maxEntries} entries per leaf node. Every entry UID listed above must appear exactly once. Do NOT leave entries uncategorized.
 
 Respond with ONLY valid JSON in this exact format:
 {
