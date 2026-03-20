@@ -357,9 +357,9 @@ function ensureSettings() {
         }
     }
 
-    if (didMutate) {
-        saveSettingsDebounced();
-    }
+    // Don't save here — filling in defaults during init can race with ST's
+    // settings load and overwrite user settings. Let ST save naturally when
+    // the user actually changes something.
 }
 
 export function getSettings() {
