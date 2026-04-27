@@ -315,6 +315,9 @@ export const SETTING_DEFAULTS = {
     sidecarMaxInjectionTokens: 4000,
     // LLM-evaluable conditional triggers (evaluated during sidecar retrieval)
     conditionalTriggersEnabled: true,
+    // Sidecar retrieval injection
+    retrievalInjectionPosition: 'in_chat',
+    retrievalInjectionDepth: 0,
     // Sidecar post-gen writer
     sidecarPostGenWriter: false,
     sidecarWriterContextMessages: 15,

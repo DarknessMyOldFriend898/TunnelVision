@@ -29,6 +29,14 @@ import { logSidecarRetrieval, logConditionalEvaluations, setSidecarActive } from
 
 const TV_SIDECAR_RETRIEVAL_KEY = 'tunnelvision_sidecar_retrieval';
 
+let _pendingWorldInfoInjection = '';
+
+export function getPendingWorldInfoInjection() {
+    const content = _pendingWorldInfoInjection;
+    _pendingWorldInfoInjection = '';
+    return content;
+}
+
 // ─── Tree Overview (reuses collapsed-tree format from search.js) ─────
 
 /**
@@ -513,8 +521,16 @@ export async function runSidecarRetrieval() {
             ? injectionText.substring(0, maxChars) + '\n[... content truncated]'
             : injectionText;
 
-        // IN_CHAT depth 0 = injected at the very bottom of the chat history (closest to the latest message)
-        setExtensionPrompt(TV_SIDECAR_RETRIEVAL_KEY, capped, extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+        const injectionPosition = settings.retrievalInjectionPosition ?? 'in_chat';
+        const injectionDepth = Number(settings.retrievalInjectionDepth ?? 0);
+
+        if (injectionPosition === 'world_info_before') {
+            _pendingWorldInfoInjection = capped;
+            setExtensionPrompt(TV_SIDECAR_RETRIEVAL_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
+        } else {
+            _pendingWorldInfoInjection = '';
+            setExtensionPrompt(TV_SIDECAR_RETRIEVAL_KEY, capped, mapPosition(injectionPosition), injectionDepth, false, extension_prompt_roles.SYSTEM);
+        }
 
         // Resolve node labels for the feed
         const nodeLabels = nodeIds.map(id => {
@@ -559,10 +575,10 @@ export async function runSidecarRetrieval() {
  * @param {Object} settings
  */
 function clearRetrievalPrompt(settings) {
-    const position = mapPosition(settings.mandatoryPromptPosition);
-    const depth = settings.mandatoryPromptDepth ?? 1;
-    const role = mapRole(settings.mandatoryPromptRole);
-    setExtensionPrompt(TV_SIDECAR_RETRIEVAL_KEY, '', position, depth, false, role);
+    _pendingWorldInfoInjection = '';
+    const position = mapPosition(settings.retrievalInjectionPosition ?? 'in_chat');
+    const depth = Number(settings.retrievalInjectionDepth ?? 0);
+    setExtensionPrompt(TV_SIDECAR_RETRIEVAL_KEY, '', position, depth, false, extension_prompt_roles.SYSTEM);
 }
 
 /**
@@ -572,6 +588,7 @@ function clearRetrievalPrompt(settings) {
  */
 function mapPosition(val) {
     switch (val) {
+        case 'before_prompt': return extension_prompt_types.BEFORE_PROMPT;
         case 'in_prompt': return extension_prompt_types.IN_PROMPT;
         case 'in_chat':
         default: return extension_prompt_types.IN_CHAT;

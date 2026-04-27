@@ -746,7 +746,7 @@
                                         <span class="tv-toggle-label">Auto-Retrieve Before Generation</span>
                                     </label>
                                     <div class="tv-help-text" style="margin-top: 4px;">
-                                        Before each generation, the sidecar navigates the tree and injects relevant entries into context. Uses your mandatory prompt position/depth/role settings for injection placement.
+                                        Before each generation, the sidecar navigates the tree and injects relevant entries into context.
                                     </div>
                                     <div id="tv_sidecar_retrieval_fields" style="display: none; margin-top: 8px;">
                                         <div style="display: flex; gap: 8px; align-items: center;">
@@ -757,6 +757,21 @@
                                             <div style="flex: 1;">
                                                 <label class="tv-label" for="tv_sidecar_max_injection">Max Injection (tokens)</label>
                                                 <input type="number" id="tv_sidecar_max_injection" class="tv-number-input" min="500" max="16000" step="500" value="4000" />
+                                            </div>
+                                        </div>
+                                        <div style="margin-top: 8px; display: flex; gap: 8px; align-items: flex-end;">
+                                            <div style="flex: 2;">
+                                                <label class="tv-label" for="tv_retrieval_injection_position">Injection Position</label>
+                                                <select id="tv_retrieval_injection_position" class="tv-select">
+                                                    <option value="world_info_before">World Info (↑Char)</option>
+                                                    <option value="before_prompt">Before Prompt</option>
+                                                    <option value="in_prompt">In Prompt (After World Info)</option>
+                                                    <option value="in_chat">In Chat (at depth)</option>
+                                                </select>
+                                            </div>
+                                            <div id="tv_retrieval_depth_field" style="flex: 1; display: none;">
+                                                <label class="tv-label" for="tv_retrieval_injection_depth">Chat Depth</label>
+                                                <input type="number" id="tv_retrieval_injection_depth" class="tv-number-input" min="0" max="100" step="1" value="0" />
                                             </div>
                                         </div>
                                         <div style="margin-top: 8px;">

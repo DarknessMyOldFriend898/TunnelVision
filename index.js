@@ -29,7 +29,7 @@ import { bindUIEvents, refreshUI } from './ui-controller.js';
 import { initActivityFeed } from './activity-feed.js';
 import { initCommands } from './commands.js';
 import { initAutoSummary } from './auto-summary.js';
-import { runSidecarRetrieval } from './sidecar-retrieval.js';
+import { runSidecarRetrieval, getPendingWorldInfoInjection } from './sidecar-retrieval.js';
 import { runSidecarWriter } from './sidecar-writer.js';
 import { separateConditions, isEvaluableCondition, formatCondition, EVALUABLE_TYPES, CONDITION_LABELS, getKeywordProbability, setKeywordProbability } from './conditions.js';
 import { loadWorldInfo, saveWorldInfo, world_names } from '../../../world-info.js';
@@ -137,6 +137,16 @@ async function init() {
                 window.TunnelVision_isRecursiveToolPass = false;
             });
         }
+    }
+
+    // World Info (↑Char) injection — appends pending retrieval content to worldInfoBefore
+    // when the user has selected that injection position.
+    if (event_types.GENERATE_BEFORE_COMBINE_PROMPTS) {
+        eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, (data) => {
+            const pending = getPendingWorldInfoInjection();
+            if (!pending) return;
+            data.worldInfoBefore = (data.worldInfoBefore ? data.worldInfoBefore + '\n\n' : '') + pending;
+        });
     }
 
     // Post-generation sidecar writer (remember/update after model responds)

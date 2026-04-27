@@ -184,6 +184,8 @@ export function bindUIEvents() {
     $('#tv_sidecar_auto_retrieval').on('change', onSidecarAutoRetrievalToggle);
     $('#tv_sidecar_context_messages').on('input', onSidecarContextMessagesChange);
     $('#tv_sidecar_max_injection').on('input', onSidecarMaxInjectionChange);
+    $('#tv_retrieval_injection_position').on('change', onRetrievalInjectionPositionChange);
+    $('#tv_retrieval_injection_depth').on('input', onRetrievalInjectionDepthChange);
     $('#tv_conditional_triggers').on('change', function () {
         const settings = getSettings();
         settings.conditionalTriggersEnabled = $(this).prop('checked');
@@ -960,6 +962,19 @@ function onSidecarMaxInjectionChange() {
     saveSettingsDebounced();
 }
 
+function onRetrievalInjectionPositionChange() {
+    const settings = getSettings();
+    settings.retrievalInjectionPosition = $(this).val();
+    $('#tv_retrieval_depth_field').toggle(settings.retrievalInjectionPosition === 'in_chat');
+    saveSettingsDebounced();
+}
+
+function onRetrievalInjectionDepthChange() {
+    const settings = getSettings();
+    settings.retrievalInjectionDepth = Number($(this).val()) || 0;
+    saveSettingsDebounced();
+}
+
 function onSidecarPostGenWriterToggle() {
     const settings = getSettings();
     settings.sidecarPostGenWriter = $(this).prop('checked');
@@ -1027,6 +1042,10 @@ function populateConnectionProfiles() {
     $('#tv_sidecar_retrieval_fields').toggle(autoRetrieval);
     $('#tv_sidecar_context_messages').val(settings.sidecarContextMessages ?? 10);
     $('#tv_sidecar_max_injection').val(settings.sidecarMaxInjectionTokens ?? 4000);
+    const injPos = settings.retrievalInjectionPosition ?? 'in_chat';
+    $('#tv_retrieval_injection_position').val(injPos);
+    $('#tv_retrieval_injection_depth').val(settings.retrievalInjectionDepth ?? 0);
+    $('#tv_retrieval_depth_field').toggle(injPos === 'in_chat');
 
     // Sync conditional triggers toggle
     $('#tv_conditional_triggers').prop('checked', settings.conditionalTriggersEnabled !== false);
