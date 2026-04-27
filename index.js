@@ -143,9 +143,14 @@ async function init() {
     // when the user has selected that injection position.
     if (event_types.GENERATE_BEFORE_COMBINE_PROMPTS) {
         eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, (data) => {
+            console.log('[TunnelVision] GENERATE_BEFORE_COMBINE_PROMPTS fired');
             const pending = getPendingWorldInfoInjection();
+            console.log('[TunnelVision] pending worldInfoBefore content length:', pending?.length ?? 0);
+            console.log('[TunnelVision] data.storyString exists:', !!data?.storyString);
+            console.log('[TunnelVision] data keys:', data ? Object.keys(data) : 'no data');
             if (!pending) return;
             data.storyString = pending + '\n\n' + (data.storyString || '');
+            console.log('[TunnelVision] storyString updated, new length:', data.storyString.length);
         });
     }
 
