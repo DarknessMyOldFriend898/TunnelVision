@@ -145,7 +145,7 @@ async function init() {
         eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, (data) => {
             const pending = getPendingWorldInfoInjection();
             if (!pending) return;
-            data.worldInfoBefore = (data.worldInfoBefore ? data.worldInfoBefore + '\n\n' : '') + pending;
+            data.storyString = pending + '\n\n' + (data.storyString || '');
         });
     }
 
