@@ -195,6 +195,7 @@ export function bindUIEvents() {
     $('#tv_sidecar_post_gen_writer').on('change', onSidecarPostGenWriterToggle);
     $('#tv_sidecar_writer_context').on('input', onSidecarWriterContextChange);
     $('#tv_sidecar_writer_max_ops').on('input', onSidecarWriterMaxOpsChange);
+    $('#tv_sidecar_writer_interval').on('input', onSidecarWriterIntervalChange);
 
     // Compact tool prompts
     $('#tv_compact_tool_prompts').on('change', onCompactToolPromptsToggle);
@@ -985,6 +986,12 @@ function onSidecarWriterMaxOpsChange() {
     saveSettingsDebounced();
 }
 
+function onSidecarWriterIntervalChange() {
+    const settings = getSettings();
+    settings.sidecarWriterInterval = Math.max(1, Number($(this).val()) || 5);
+    saveSettingsDebounced();
+}
+
 // ─── Per-Lorebook Permissions ────────────────────────────────────
 
 function onBookPermissionChange() {
@@ -1033,6 +1040,7 @@ function populateConnectionProfiles() {
     $('#tv_sidecar_writer_fields').toggle(postGenWriter);
     $('#tv_sidecar_writer_context').val(settings.sidecarWriterContextMessages ?? 15);
     $('#tv_sidecar_writer_max_ops').val(settings.sidecarWriterMaxOps ?? 5);
+    $('#tv_sidecar_writer_interval').val(settings.sidecarWriterInterval ?? 5);
 }
 
 // ─── Tree Management ─────────────────────────────────────────────

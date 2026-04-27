@@ -40,6 +40,7 @@ const EXTENSION_FOLDER = `third-party/TunnelVision`;
 // Guard: prevents tool re-registration when WORLDINFO_UPDATED fires during generation
 // (lorebook saves from tool actions trigger this event mid-generation).
 let _generationInProgress = false;
+let _writerMessageCounter = 0;
 
 // Tracks recursion depth for tool-call passes within a single generation turn.
 // ST's Generate() increments depth internally but doesn't expose it to extensions,
@@ -951,6 +952,14 @@ async function onMessageReceived(_messageId, type) {
 
     const settings = getSettings();
     if (!settings.sidecarPostGenWriter || settings.globalEnabled === false) return;
+
+    _writerMessageCounter++;
+    const interval = settings.sidecarWriterInterval ?? 5;
+    if (_writerMessageCounter < interval) {
+        console.debug(`[TunnelVision] Sidecar writer skipped (${_writerMessageCounter}/${interval} messages)`);
+        return;
+    }
+    _writerMessageCounter = 0;
 
     try {
         await runSidecarWriter();

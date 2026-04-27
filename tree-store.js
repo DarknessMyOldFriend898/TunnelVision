@@ -319,6 +319,7 @@ export const SETTING_DEFAULTS = {
     sidecarPostGenWriter: false,
     sidecarWriterContextMessages: 15,
     sidecarWriterMaxOps: 5,
+    sidecarWriterInterval: 5,
     // Per-lorebook permissions: { bookName: 'read_write' | 'read_only' | 'write_only' }
     bookPermissions: {},
     // Compact tool prompts: register one guide tool + one-liner descriptions to save tokens
