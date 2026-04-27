@@ -141,6 +141,9 @@ export function bindUIEvents() {
     // LLM chunk size
     $('#tv_chunk_tokens').on('change', onChunkTokensChange);
 
+    // LLM tree structure guide
+    $('#tv_llm_tree_guide').on('input', onLlmTreeGuideChange);
+
     // Vector dedup toggle + threshold
     $('#tv_vector_dedup').on('change', onVectorDedupToggle);
     $('#tv_dedup_threshold').on('change', onDedupThresholdChange);
@@ -275,6 +278,9 @@ export function refreshUI() {
 
     // Sync LLM chunk size
     $('#tv_chunk_tokens').val(settings.llmChunkTokens ?? 30000);
+
+    // Sync LLM tree guide
+    $('#tv_llm_tree_guide').val(settings.llmTreeGuide ?? '');
 
     // Sync vector dedup
     const dedupEnabled = settings.enableVectorDedup === true;
@@ -630,6 +636,12 @@ function onChunkTokensChange() {
 
     const settings = getSettings();
     settings.llmChunkTokens = clamped;
+    saveSettingsDebounced();
+}
+
+function onLlmTreeGuideChange() {
+    const settings = getSettings();
+    settings.llmTreeGuide = $('#tv_llm_tree_guide').val();
     saveSettingsDebounced();
 }
 
