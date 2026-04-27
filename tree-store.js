@@ -328,6 +328,8 @@ export const SETTING_DEFAULTS = {
     bookPermissions: {},
     // Compact tool prompts: register one guide tool + one-liner descriptions to save tokens
     compactToolPrompts: true,
+    // Example tree structure to guide LLM when building the tree from scratch
+    llmTreeGuide: '',
 };
 
 function ensureSettings() {

@@ -430,14 +430,20 @@ function extractCategoryLabels(root) {
  * @returns {string}
  */
 function buildContinuationPrompt(lorebookName, entries, existingCategories, totalEntryCount = 0) {
-    const detail = getSettings().llmBuildDetail || 'full';
+    const settings = getSettings();
+    const detail = settings.llmBuildDetail || 'full';
     const entryList = entries.map(e => `  - ${formatEntryForLLM(e, detail)}`).join('\n');
     const catList = existingCategories.map(c => `  - ${c}`).join('\n');
     const gran = getEffectiveGranularity(totalEntryCount);
     const subCatHint = gran.level >= 3 ? ' Prefer creating new sub-categories over placing entries in broad existing ones.' : '';
 
-    return `You are continuing to organize a lorebook called "${lorebookName}". Previous entries have already been categorized.
+    const guide = settings.llmTreeGuide?.trim();
+    const guideSection = guide
+        ? `\nUse this tree structure as your guide for organizing entries. Match the category names and hierarchy as closely as possible:\n\`\`\`\n${guide}\n\`\`\`\n`
+        : '';
 
+    return `You are continuing to organize a lorebook called "${lorebookName}". Previous entries have already been categorized.
+${guideSection}
 Existing categories:
 ${catList}
 
@@ -796,7 +802,8 @@ async function subdivideLargeNodes(node, bookData, totalEntryCount = 0, _depth =
 }
 
 function buildCategorizationPrompt(lorebookName, entries, totalEntryCount = 0, allEntryManifest = null) {
-    const detail = getSettings().llmBuildDetail || 'full';
+    const settings = getSettings();
+    const detail = settings.llmBuildDetail || 'full';
     const gran = getEffectiveGranularity(totalEntryCount);
     const entryList = entries.map(e => `  - ${formatEntryForLLM(e, detail)}`).join('\n');
 
@@ -806,8 +813,13 @@ function buildCategorizationPrompt(lorebookName, entries, totalEntryCount = 0, a
         ? `\nThis lorebook has ${totalEntryCount} total entries. Here is a list of ALL entry names for context (you will only categorize the detailed entries below, but design your categories to accommodate all of these):\n  - ${allEntryManifest}\n`
         : '';
 
+    const guide = settings.llmTreeGuide?.trim();
+    const guideSection = guide
+        ? `\nUse this tree structure as your guide for organizing entries. Match the category names and hierarchy as closely as possible:\n\`\`\`\n${guide}\n\`\`\`\n`
+        : '';
+
     return `You are organizing a lorebook called "${lorebookName}" into a hierarchical tree for efficient retrieval.
-${manifestSection}
+${manifestSection}${guideSection}
 Here are the entries to categorize now (with full details):
 ${entryList}
 
