@@ -186,6 +186,7 @@ export function bindUIEvents() {
     $('#tv_sidecar_max_injection').on('input', onSidecarMaxInjectionChange);
     $('#tv_retrieval_injection_position').on('change', onRetrievalInjectionPositionChange);
     $('#tv_retrieval_injection_depth').on('input', onRetrievalInjectionDepthChange);
+    $('#tv_retrieval_injection_tag').on('input', onRetrievalInjectionTagChange);
     $('#tv_conditional_triggers').on('change', function () {
         const settings = getSettings();
         settings.conditionalTriggersEnabled = $(this).prop('checked');
@@ -966,12 +967,19 @@ function onRetrievalInjectionPositionChange() {
     const settings = getSettings();
     settings.retrievalInjectionPosition = $(this).val();
     $('#tv_retrieval_depth_field').toggle(settings.retrievalInjectionPosition === 'in_chat');
+    $('#tv_retrieval_tag_field').toggle(settings.retrievalInjectionPosition === 'after_tag');
     saveSettingsDebounced();
 }
 
 function onRetrievalInjectionDepthChange() {
     const settings = getSettings();
     settings.retrievalInjectionDepth = Number($(this).val()) || 0;
+    saveSettingsDebounced();
+}
+
+function onRetrievalInjectionTagChange() {
+    const settings = getSettings();
+    settings.retrievalInjectionTag = $(this).val() || '<setting>';
     saveSettingsDebounced();
 }
 
@@ -1045,7 +1053,9 @@ function populateConnectionProfiles() {
     const injPos = settings.retrievalInjectionPosition ?? 'in_chat';
     $('#tv_retrieval_injection_position').val(injPos);
     $('#tv_retrieval_injection_depth').val(settings.retrievalInjectionDepth ?? 0);
+    $('#tv_retrieval_injection_tag').val(settings.retrievalInjectionTag ?? '<setting>');
     $('#tv_retrieval_depth_field').toggle(injPos === 'in_chat');
+    $('#tv_retrieval_tag_field').toggle(injPos === 'after_tag');
 
     // Sync conditional triggers toggle
     $('#tv_conditional_triggers').prop('checked', settings.conditionalTriggersEnabled !== false);

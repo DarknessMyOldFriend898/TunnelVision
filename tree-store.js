@@ -318,6 +318,7 @@ export const SETTING_DEFAULTS = {
     // Sidecar retrieval injection
     retrievalInjectionPosition: 'in_chat',
     retrievalInjectionDepth: 0,
+    retrievalInjectionTag: '<setting>',
     // Sidecar post-gen writer
     sidecarPostGenWriter: false,
     sidecarWriterContextMessages: 15,

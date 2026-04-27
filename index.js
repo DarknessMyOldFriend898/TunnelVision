@@ -143,14 +143,12 @@ async function init() {
     // when the user has selected that injection position.
     if (event_types.GENERATE_BEFORE_COMBINE_PROMPTS) {
         eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, (data) => {
-            console.log('[TunnelVision] GENERATE_BEFORE_COMBINE_PROMPTS fired');
             const pending = getPendingWorldInfoInjection();
-            console.log('[TunnelVision] pending worldInfoBefore content length:', pending?.length ?? 0);
-            console.log('[TunnelVision] data.storyString exists:', !!data?.storyString);
-            console.log('[TunnelVision] data keys:', data ? Object.keys(data) : 'no data');
             if (!pending) return;
-            data.storyString = pending + '\n\n' + (data.storyString || '');
-            console.log('[TunnelVision] storyString updated, new length:', data.storyString.length);
+            const settings = getSettings();
+            const tag = settings.retrievalInjectionTag || '<setting>';
+            const result = injectAfterTag(data.storyString || '', tag, pending);
+            data.storyString = result !== null ? result : pending + '\n\n' + (data.storyString || '');
         });
     }
 
@@ -794,6 +792,65 @@ function convertToolChoiceToAnthropicFormat(toolChoice) {
  * and "..." becomes the visible output. By setting tool_choice to "none" on
  * the final pass, we force the model to write narrative instead.
  */
+/**
+ * Find tag in str and return a new string with content inserted immediately after it.
+ * Returns null if tag is not found.
+ * @param {string} str
+ * @param {string} tag
+ * @param {string} content
+ * @returns {string|null}
+ */
+function injectAfterTag(str, tag, content) {
+    const idx = str.indexOf(tag);
+    if (idx === -1) return null;
+    const pos = idx + tag.length;
+    return str.slice(0, pos) + '\n' + content + '\n' + str.slice(pos);
+}
+
+/**
+ * Inject content after a tag in the system prompt of a chat completion request.
+ * Handles Anthropic (system string or content-block array) and OpenAI message formats.
+ * @param {Object} data - generate_data from CHAT_COMPLETION_SETTINGS_READY
+ * @param {string} content
+ * @param {string} tag
+ * @returns {boolean} true if injection succeeded
+ */
+function injectAfterTagInSystemPrompt(data, content, tag) {
+    if (typeof data.system === 'string') {
+        const result = injectAfterTag(data.system, tag, content);
+        if (result !== null) { data.system = result; return true; }
+    }
+
+    if (Array.isArray(data.system)) {
+        for (const block of data.system) {
+            if (block.type === 'text' && typeof block.text === 'string') {
+                const result = injectAfterTag(block.text, tag, content);
+                if (result !== null) { block.text = result; return true; }
+            }
+        }
+    }
+
+    if (Array.isArray(data.messages)) {
+        const sysMsg = data.messages.find(m => m.role === 'system');
+        if (sysMsg) {
+            if (typeof sysMsg.content === 'string') {
+                const result = injectAfterTag(sysMsg.content, tag, content);
+                if (result !== null) { sysMsg.content = result; return true; }
+            }
+            if (Array.isArray(sysMsg.content)) {
+                for (const block of sysMsg.content) {
+                    if (block.type === 'text' && typeof block.text === 'string') {
+                        const result = injectAfterTag(block.text, tag, content);
+                        if (result !== null) { block.text = result; return true; }
+                    }
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 function onChatCompletionSettingsReady(data) {
     if (!_generationInProgress) return;
 
@@ -815,6 +872,17 @@ function onChatCompletionSettingsReady(data) {
                 }
             }
             console.log(`[TunnelVision] Converted ${data.tools.length} tool(s) from OpenAI to Anthropic format`);
+        }
+    }
+
+    // ── After-tag retrieval injection ────────────────────────────────
+    const settings = getSettings();
+    if ((settings.retrievalInjectionPosition ?? 'in_chat') === 'after_tag') {
+        const pending = getPendingWorldInfoInjection();
+        if (pending) {
+            const tag = settings.retrievalInjectionTag || '<setting>';
+            const ok = injectAfterTagInSystemPrompt(data, pending, tag);
+            console.log(`[TunnelVision] After-tag injection: ${ok ? `success after "${tag}"` : `tag "${tag}" not found in system prompt`}`);
         }
     }
 

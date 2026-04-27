@@ -32,7 +32,6 @@ const TV_SIDECAR_RETRIEVAL_KEY = 'tunnelvision_sidecar_retrieval';
 let _pendingWorldInfoInjection = '';
 
 export function getPendingWorldInfoInjection() {
-    console.log('[TunnelVision] getPendingWorldInfoInjection called, content length:', _pendingWorldInfoInjection.length);
     const content = _pendingWorldInfoInjection;
     _pendingWorldInfoInjection = '';
     return content;
@@ -525,8 +524,7 @@ export async function runSidecarRetrieval() {
         const injectionPosition = settings.retrievalInjectionPosition ?? 'in_chat';
         const injectionDepth = Number(settings.retrievalInjectionDepth ?? 0);
 
-        if (injectionPosition === 'world_info_before') {
-            console.log('[TunnelVision] Storing pending worldInfoBefore injection, length:', capped.length);
+        if (injectionPosition === 'after_tag') {
             _pendingWorldInfoInjection = capped;
             setExtensionPrompt(TV_SIDECAR_RETRIEVAL_KEY, '', extension_prompt_types.IN_CHAT, 0, false, extension_prompt_roles.SYSTEM);
         } else {

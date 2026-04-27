@@ -763,7 +763,7 @@
                                             <div style="flex: 2;">
                                                 <label class="tv-label" for="tv_retrieval_injection_position">Injection Position</label>
                                                 <select id="tv_retrieval_injection_position" class="tv-select">
-                                                    <option value="world_info_before">World Info (↑Char)</option>
+                                                    <option value="after_tag">After Prompt Tag</option>
                                                     <option value="before_prompt">Before Prompt</option>
                                                     <option value="in_prompt">In Prompt (After World Info)</option>
                                                     <option value="in_chat">In Chat (at depth)</option>
@@ -772,6 +772,10 @@
                                             <div id="tv_retrieval_depth_field" style="flex: 1; display: none;">
                                                 <label class="tv-label" for="tv_retrieval_injection_depth">Chat Depth</label>
                                                 <input type="number" id="tv_retrieval_injection_depth" class="tv-number-input" min="0" max="100" step="1" value="0" />
+                                            </div>
+                                            <div id="tv_retrieval_tag_field" style="flex: 1; display: none;">
+                                                <label class="tv-label" for="tv_retrieval_injection_tag">Inject After Tag</label>
+                                                <input type="text" id="tv_retrieval_injection_tag" class="text_pole" style="height: 32px; font-size: 12px;" placeholder="e.g. &lt;setting&gt;" />
                                             </div>
                                         </div>
                                         <div style="margin-top: 8px;">
